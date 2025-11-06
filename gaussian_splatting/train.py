@@ -270,6 +270,8 @@ if __name__ == "__main__":
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
+    # output in the same folder
+    args.model_path = os.path.join(args.source_path, "output") if args.model_path == "" else args.model_path
     print("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)
