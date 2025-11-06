@@ -49,19 +49,19 @@ torch.backends.cudnn.deterministic = False
 
 import argparse
 import trimesh
-import utils.opt as opt_utils
+import vggtx.utils.opt as opt_utils
 import utils.colmap as colmap_utils
 from tqdm import tqdm
 from pathlib import Path
 from datetime import datetime
-from utils.metric_torch import evaluate_auc, evaluate_pcd, write_evaluation_results
+from vggtx.utils.metric_torch import evaluate_auc, evaluate_pcd, write_evaluation_results
 
-from vggt.models.vggt import VGGT
-from vggt.utils.load_fn import load_and_preprocess_images_ratio
-from vggt.utils.pose_enc import pose_encoding_to_extri_intri
-from vggt.utils.geometry import unproject_depth_map_to_point_map
-from vggt.utils.helper import create_pixel_coordinate_grid, randomly_limit_trues
-from vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pycolmap_wo_track
+from vggtx.vggt.models.vggt import VGGT
+from vggtx.vggt.utils.load_fn import load_and_preprocess_images_ratio
+from vggtx.vggt.utils.pose_enc import pose_encoding_to_extri_intri
+from vggtx.vggt.utils.geometry import unproject_depth_map_to_point_map
+from vggtx.vggt.utils.helper import create_pixel_coordinate_grid, randomly_limit_trues
+from vggtx.vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pycolmap_wo_track
 
 
 torch._dynamo.config.accumulated_cache_size_limit = 512
