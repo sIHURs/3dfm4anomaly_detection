@@ -254,7 +254,7 @@ def batch_np_matrix_to_pycolmap_wo_track(
         )  # Rot and Trans
 
         image = pycolmap.Image(
-            id=fidx + 1, name=f"image_{fidx + 1}", camera_id=camera.camera_id, cam_from_world=cam_from_world
+            image_id=fidx + 1, name=f"image_{fidx + 1}", camera_id=camera.camera_id, cam_from_world=cam_from_world
         )
 
         points2D_list = []

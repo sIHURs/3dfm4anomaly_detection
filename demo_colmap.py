@@ -10,6 +10,7 @@ import glob
 import os
 import torch
 import torch.nn.functional as F
+import shutil
 
 # disable triton if arch not support
 def is_pascal():
@@ -73,6 +74,7 @@ def run_VGGT(images, device, dtype, chunk_size):
     # Run VGGT for camera and depth estimation
     model = VGGT(chunk_size=chunk_size)
     _URL = "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
+    os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
     model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
     model.eval()
     model = model.to(device).to(dtype)
@@ -94,7 +96,7 @@ def parse_args():
     parser.add_argument("--scene_dir", type=str, default="data/MAD_Scene", help="Directory containing the scene images")
     parser.add_argument("--post_fix", type=str, default="_vggt_x", help="Post fix for the output folder")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
-    parser.add_argument("--use_ga", action="store_true", default=True, help="Whether to apply global alignment for better reconstruction")
+    parser.add_argument("--use_ga", action="store_true", default=False, help="Whether to apply global alignment for better reconstruction")
     parser.add_argument("--save_depth", action="store_true", default=False, help="If save depth")
     parser.add_argument("--chunk_size", type=int, default=256, help="Chunk size for frame-wise operation in VGGT")
     parser.add_argument("--total_frame_num", type=int, default=None, help="Number of frames to reconstruct")
@@ -108,8 +110,9 @@ def demo_fn(args):
     # Print configuration
     print("Arguments:", vars(args))
 
-    target_scene_dir = os.path.join(f"{os.path.dirname(args.scene_dir)}{args.post_fix}", os.path.basename(args.scene_dir))
-    os.makedirs(target_scene_dir, exist_ok=True)
+    # target_scene_dir = os.path.join(f"{os.path.dirname(args.scene_dir)}{args.post_fix}", os.path.basename(args.scene_dir))
+    # os.makedirs(target_scene_dir, exist_ok=True)
+    target_scene_dir = args.scene_dir
 
     # Set seed for reproducibility
     np.random.seed(args.seed)
@@ -332,10 +335,66 @@ def demo_fn(args):
 
     return True
 
+def restructure_scene_dir(args):
+    """
+    Original folder structure:
+      scene_dir/
+        images/
+        sparse/
+          0/
+            images.bin
+            cameras.bin
+            points3D.bin
+
+    Target folder structure:
+      scene_dir/
+        input/
+        distorted/
+          sparse/
+            0/
+              images.bin
+              cameras.bin
+              points3D.bin
+    """
+    scene_dir = args.scene_dir
+    images_dir = os.path.join(scene_dir, "images")
+    sparse_dir = os.path.join(scene_dir, "sparse", "0")
+
+    # Target paths
+    input_dir = os.path.join(scene_dir, "input")
+    new_sparse_dir = os.path.join(scene_dir, "distorted", "sparse", "0")
+    os.makedirs(new_sparse_dir, exist_ok=True)
+
+    # 1️⃣ Rename "images" to "input"
+    if os.path.exists(images_dir):
+        if os.path.exists(input_dir):
+            print(f"⚠️ Target directory already exists: {input_dir}, skipping rename.")
+        else:
+            shutil.move(images_dir, input_dir)
+            print(f"✅ Renamed 'images' to 'input'")
+
+    # 2️⃣ Move files from "sparse/0" to "distorted/sparse/0"
+    if os.path.exists(sparse_dir):
+        for file_name in os.listdir(sparse_dir):
+            src = os.path.join(sparse_dir, file_name)
+            dst = os.path.join(new_sparse_dir, file_name)
+            if os.path.isfile(src):
+                shutil.move(src, dst)
+        print(f"✅ Moved contents of 'sparse/0' to {new_sparse_dir}")
+
+    # 3️⃣ Delete the old "sparse" directory
+    old_sparse_root = os.path.join(scene_dir, "sparse")
+    if os.path.exists(old_sparse_root):
+        shutil.rmtree(old_sparse_root)
+        print(f"🗑️ Removed old 'sparse' folder")
+
+    print(f"🎯 Folder structure successfully adjusted: {scene_dir}")
+
 
 if __name__ == "__main__":
     args = parse_args()
     demo_fn(args)
+    restructure_scene_dir(args)
 
 
 # Work in Progress (WIP)
