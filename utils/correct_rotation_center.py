@@ -110,6 +110,8 @@ def recenter_colmap_model(
     # --- Save recentered model ---
     colmap.write_model(cameras, images, points3D, out_sparse_dir, ext=".bin")
 
+    print(f"✅ Correct Roration Center: saved recentered COLMAP model to {out_sparse_dir}")
+
     return {
         "T": T,
         "used": used,

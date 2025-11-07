@@ -4,6 +4,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+import shutil
 import random
 import numpy as np
 import glob
@@ -23,13 +24,13 @@ import trimesh
 import pycolmap
 
 
-from vggt.models.vggt import VGGT
-from vggt.utils.load_fn import load_and_preprocess_images_square
-from vggt.utils.pose_enc import pose_encoding_to_extri_intri
-from vggt.utils.geometry import unproject_depth_map_to_point_map
-from vggt.utils.helper import create_pixel_coordinate_grid, randomly_limit_trues
-from vggt.dependency.track_predict import predict_tracks
-from vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pycolmap, batch_np_matrix_to_pycolmap_wo_track
+from vggt_low_vram.vggt.models.vggt import VGGT
+from vggt_low_vram.vggt.utils.load_fn import load_and_preprocess_images_square
+from vggt_low_vram.vggt.utils.pose_enc import pose_encoding_to_extri_intri
+from vggt_low_vram.vggt.utils.geometry import unproject_depth_map_to_point_map
+from vggt_low_vram.vggt.utils.helper import create_pixel_coordinate_grid, randomly_limit_trues
+from vggt_low_vram.vggt.dependency.track_predict import predict_tracks
+from vggt_low_vram.vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pycolmap, batch_np_matrix_to_pycolmap_wo_track
 
 
 # TODO: add support for masks
@@ -298,11 +299,67 @@ def rename_colmap_recons_and_rescale_camera(
 
     return reconstruction
 
+def restructure_scene_dir(args):
+    """
+    Original folder structure:
+      scene_dir/
+        images/
+        sparse/
+          0/
+            images.bin
+            cameras.bin
+            points3D.bin
+
+    Target folder structure:
+      scene_dir/
+        input/
+        distorted/
+          sparse/
+            0/
+              images.bin
+              cameras.bin
+              points3D.bin
+    """
+    scene_dir = args.scene_dir
+    images_dir = os.path.join(scene_dir, "images")
+    sparse_dir = os.path.join(scene_dir, "sparse")
+
+    # Target paths
+    input_dir = os.path.join(scene_dir, "input")
+    new_sparse_dir = os.path.join(scene_dir, "distorted", "sparse", "0")
+    os.makedirs(new_sparse_dir, exist_ok=True)
+
+    # 1️⃣ Rename "images" to "input"
+    if os.path.exists(images_dir):
+        if os.path.exists(input_dir):
+            print(f"⚠️ Target directory already exists: {input_dir}, skipping rename.")
+        else:
+            shutil.move(images_dir, input_dir)
+            print(f"✅ Renamed 'images' to 'input'")
+
+    # 2️⃣ Move files from "sparse/0" to "distorted/sparse/0"
+    if os.path.exists(sparse_dir):
+        for file_name in os.listdir(sparse_dir):
+            src = os.path.join(sparse_dir, file_name)
+            dst = os.path.join(new_sparse_dir, file_name)
+            if os.path.isfile(src):
+                shutil.move(src, dst)
+        print(f"✅ Moved contents of 'sparse/0' to {new_sparse_dir}")
+
+    # 3️⃣ Delete the old "sparse" directory
+    old_sparse_root = os.path.join(scene_dir, "sparse")
+    if os.path.exists(old_sparse_root):
+        shutil.rmtree(old_sparse_root)
+        print(f"🗑️ Removed old 'sparse' folder")
+
+    print(f"🎯 Folder structure successfully adjusted: {scene_dir}")
+
 
 if __name__ == "__main__":
     args = parse_args()
     with torch.no_grad():
         demo_fn(args)
+    restructure_scene_dir(args)
 
 
 # Work in Progress (WIP)
