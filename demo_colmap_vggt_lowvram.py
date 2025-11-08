@@ -43,6 +43,7 @@ from vggt_low_vram.vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pyco
 def parse_args():
     parser = argparse.ArgumentParser(description="VGGT Demo")
     parser.add_argument("--scene_dir", type=str, required=True, help="Directory containing the scene images")
+    parser.add_argument("--output_dir", type=str, required=True, help="Directory to save the output reconstruction")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--use_ba", action="store_true", default=False, help="Use BA for reconstruction")
     ######### BA parameters #########
@@ -60,6 +61,10 @@ def parse_args():
     parser.add_argument(
         "--conf_thres_value", type=float, default=5.0, help="Confidence threshold value for depth filtering (wo BA)"
     )
+    parser.add_argument(
+        "--adjust_folder", action="store_true", default=True, help="adjust the folder structure to match COLMAP format"
+    )
+
     return parser.parse_args()
 
 
@@ -93,6 +98,9 @@ def run_VGGT(model, images, device, dtype, resolution=518):
 
 def demo_fn(args):
     # Print configuration
+    if args.output_dir is None:
+        args.output_dir = os.path.join(args.scene_dir)
+
     print("Arguments:", vars(args))
 
     # Set seed for reproducibility
@@ -248,13 +256,13 @@ def demo_fn(args):
         shared_camera=shared_camera,
     )
 
-    print(f"Saving reconstruction to {args.scene_dir}/sparse")
-    sparse_reconstruction_dir = os.path.join(args.scene_dir, "sparse")
+    print(f"Saving reconstruction to {args.output_dir}/sparse")
+    sparse_reconstruction_dir = os.path.join(args.output_dir, "sparse")
     os.makedirs(sparse_reconstruction_dir, exist_ok=True)
     reconstruction.write(sparse_reconstruction_dir)
 
     # Save point cloud for fast visualization
-    trimesh.PointCloud(points_3d, colors=points_rgb).export(os.path.join(args.scene_dir, "sparse/points.ply"))
+    trimesh.PointCloud(points_3d, colors=points_rgb).export(os.path.join(args.output_dir, "sparse/points.ply"))
 
     return True
 
@@ -320,13 +328,13 @@ def restructure_scene_dir(args):
               cameras.bin
               points3D.bin
     """
-    scene_dir = args.scene_dir
-    images_dir = os.path.join(scene_dir, "images")
-    sparse_dir = os.path.join(scene_dir, "sparse")
+    output_dir = args.output_dir
+    images_dir = os.path.join(output_dir, "images")
+    sparse_dir = os.path.join(output_dir, "sparse")
 
     # Target paths
-    input_dir = os.path.join(scene_dir, "input")
-    new_sparse_dir = os.path.join(scene_dir, "distorted", "sparse", "0")
+    input_dir = os.path.join(output_dir, "input")
+    new_sparse_dir = os.path.join(output_dir, "distorted", "sparse", "0")
     os.makedirs(new_sparse_dir, exist_ok=True)
 
     # 1️⃣ Rename "images" to "input"
@@ -347,19 +355,20 @@ def restructure_scene_dir(args):
         print(f"✅ Moved contents of 'sparse/0' to {new_sparse_dir}")
 
     # 3️⃣ Delete the old "sparse" directory
-    old_sparse_root = os.path.join(scene_dir, "sparse")
+    old_sparse_root = os.path.join(output_dir, "sparse")
     if os.path.exists(old_sparse_root):
         shutil.rmtree(old_sparse_root)
         print(f"🗑️ Removed old 'sparse' folder")
 
-    print(f"🎯 Folder structure successfully adjusted: {scene_dir}")
+    print(f"🎯 Folder structure successfully adjusted: {output_dir}")
 
 
 if __name__ == "__main__":
     args = parse_args()
     with torch.no_grad():
         demo_fn(args)
-    restructure_scene_dir(args)
+    if args.adjust_folder:
+        restructure_scene_dir(args)
 
 
 # Work in Progress (WIP)
