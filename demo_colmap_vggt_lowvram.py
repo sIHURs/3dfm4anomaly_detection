@@ -43,7 +43,7 @@ from vggt_low_vram.vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pyco
 def parse_args():
     parser = argparse.ArgumentParser(description="VGGT Demo")
     parser.add_argument("--scene_dir", type=str, required=True, help="Directory containing the scene images")
-    parser.add_argument("--output_dir", type=str, required=True, help="Directory to save the output reconstruction")
+    parser.add_argument("--output_dir", type=str, default=None, help="Directory to save the output reconstruction")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--use_ba", action="store_true", default=False, help="Use BA for reconstruction")
     ######### BA parameters #########
