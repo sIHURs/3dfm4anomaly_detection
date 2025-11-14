@@ -36,7 +36,8 @@ todo:
 
 ### 1. Create Conda Environment
 ```bash
-conda env create -f <env_name> python==3.11 -y
+# create own conda-env
+conda create -n -f <env_name> python==3.11 -y
 conda activate <env_name>
 
 # install colmap
@@ -49,6 +50,23 @@ pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https
 pip install -r requirements.txt
 
 # locally build
-pip install submodules/diff-gaussian-rasterization
-pip install submodules/simple-knn
-pip install submodules/fused-ssim
+
+cd submodules/diff-gaussian-rasterization
+git checkout 9c5c202
+pip install  . --no-build-isolation 
+
+# Optional: if use torch2.8.0 + cuda12.9 and turing arch, add header in rasterizer_impl.h
+
+cd ~/tmp/3dfm4anomaly_detection/submodules/diff-gaussian-rasterizatio
+vim cuda_rasterizer/rasterizer_impl.h
+# add the follow headers into the file
+# #include <cstdint>
+# #include <cstddef>
+
+cd submodules/simple-knn
+git checkout 86710c2
+pip install . --no-build-isolation 
+
+dc submodules/fused-ssim
+git checkout 1272e21
+pip install . --no-build-isolation 
