@@ -19,6 +19,7 @@ from gaussian_splatting.scene import Scene, GaussianModel
 from gaussian_splatting.utils.general_utils import safe_state, get_expon_lr_func
 import uuid
 from tqdm import tqdm
+from torchvision.utils import save_image
 from gaussian_splatting.utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from gaussian_splatting.arguments import ModelParams, PipelineParams, OptimizationParams
@@ -233,6 +234,14 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     if train_test_exp:
                         image = image[..., image.shape[-1] // 2:]
                         gt_image = gt_image[..., gt_image.shape[-1] // 2:]
+
+                    # new added: save a rendered view from each checkpoints
+                    
+                    out_dir = os.path.join(scene.model_path, f"renders_{config['name']}")
+                    os.makedirs(out_dir, exist_ok=True)
+                    save_path = os.path.join(out_dir, f"iter_{iteration:06d}_{idx}.png")
+
+                    save_image(image, save_path)
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                         if iteration == testing_iterations[0]:

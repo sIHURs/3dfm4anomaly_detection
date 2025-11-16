@@ -17,3 +17,4 @@ huggingface_hub
 safetensors
 pycolmap==3.10.0
 glm
+tensorboard
