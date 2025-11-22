@@ -45,6 +45,7 @@ def parse_args():
     parser.add_argument("--scene_dir", type=str, required=True, help="Directory containing the scene images")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory to save the output reconstruction")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument("--max_points", type=int, default=100000, help="Number of predicted points for colmap")
     parser.add_argument("--use_ba", action="store_true", default=False, help="Use BA for reconstruction")
     ######### BA parameters #########
     parser.add_argument(
@@ -208,7 +209,7 @@ def demo_fn(args):
         reconstruction_resolution = img_load_resolution
     else:
         conf_thres_value = args.conf_thres_value
-        max_points_for_colmap = 100000  # randomly sample 3D points
+        max_points_for_colmap = args.max_points  # randomly sample 3D points
         shared_camera = False  # in the feedforward manner, we do not support shared camera
         camera_type = "PINHOLE"  # in the feedforward manner, we only support PINHOLE camera
 
