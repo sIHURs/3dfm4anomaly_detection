@@ -301,39 +301,83 @@ def run_pose_analysis(dir, cls, align=True, save_aligned_pred=None, vis=False, s
     print(f"Splatpose Rot   Error in deg: mean={r_err_deg.mean().item():.6g} deg, median={r_err_deg.median().item():.6g} deg, max={r_err_deg.max().item():.6g} deg")
 
     results = {
-    "trans_error": {
-        "mean": round(t_err.mean().item(), 3),
-        "median": round(t_err.median().item(), 3),
-        "max": round(t_err.max().item(), 3)
-    },
-    "rot_error_rad": {
-        "mean": round(r_err.mean().item(), 3),
-        "median": round(r_err.median().item(), 3),
-        "max": round(r_err.max().item(), 3)
-    },
-    "rot_error_deg": {
-        "mean": round(r_err_deg.mean().item(), 3),
-        "median": round(r_err_deg.median().item(), 3),
-        "max": round(r_err_deg.max().item(), 3)
+        "trans_error": {
+            "mean": round(t_err.mean().item(), 3),
+            "median": round(t_err.median().item(), 3),
+            "max": round(t_err.max().item(), 3)
+        },
+        "rot_error_rad": {
+            "mean": round(r_err.mean().item(), 3),
+            "median": round(r_err.median().item(), 3),
+            "max": round(r_err.max().item(), 3)
+        },
+        "rot_error_deg": {
+            "mean": round(r_err_deg.mean().item(), 3),
+            "median": round(r_err_deg.median().item(), 3),
+            "max": round(r_err_deg.max().item(), 3)
+        }
     }
-}
 
     if vis:
+        # --- error computation ---
+        pos_err = np.linalg.norm(C_pred - C_gt, axis=1)  # translation error
+        rot_err_deg = r_err_deg if not isinstance(r_err_deg, torch.Tensor) else r_err_deg.cpu().numpy()
+
+        # --- marker size = translation error ---
+        size = 20 + (pos_err / pos_err.max()) * 80
+
+        # --- plotting ---
         fig = plt.figure(figsize=(8,6))
         ax = fig.add_subplot(111, projection="3d")
-        ax.scatter(C_gt[:,0],   C_gt[:,1],   C_gt[:,2],   s=18, label="GT",   marker='o')
-        ax.scatter(C_pred[:,0], C_pred[:,1], C_pred[:,2],
-           s=14, label="Pred", marker='^', c='r')
 
-        # error lines
-        for a,b in zip(C_gt, C_pred):
-            ax.plot([a[0],b[0]], [a[1],b[1]], [a[2],b[2]], linewidth=0.5)
+        # GT cameras (grey, subtle)
+        ax.scatter(
+            C_gt[:,0], C_gt[:,1], C_gt[:,2],
+            s=18, label="GT", marker='o',
+            c='lightgray', alpha=0.7
+        )
+
+        # Pred cameras: size = translation error, color = rotation error (deg)
+        sc = ax.scatter(
+            C_pred[:,0], C_pred[:,1], C_pred[:,2],
+            s=size,
+            marker='^',
+            c=rot_err_deg,           # 🔥 rotation error controls color
+            cmap='plasma',
+            edgecolors='k',
+            alpha=0.9,
+            label="Pred"
+        )
+
+        # connecting lines (translation displacement)
+        for a, b in zip(C_gt, C_pred):
+            ax.plot(
+                [a[0], b[0]],
+                [a[1], b[1]],
+                [a[2], b[2]],
+                linewidth=0.4,
+                color='gray',
+                alpha=0.4
+            )
 
         draw_camera_axes(ax, C_pred, R_pred, convention='opengl', draw_axes=False)
 
-        ax.set_xlabel("X"); ax.set_ylabel("Y"); ax.set_zlabel("Z")
-        ax.set_title("Camera centers: GT (o) vs Pred (^) " + ("[aligned]" if align else ""))
-        ax.legend(); plt.tight_layout(); plt.show()
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+        ax.set_title(
+            "VGGT Camera Estimation Evaluation - 01Gorilla\n"
+            "color = rotation error (deg), size = translation error "
+            + ("[aligned]" if align else "")
+        )
+
+        # --- colorbar for rotation error ---
+        cbar = plt.colorbar(sc, ax=ax, fraction=0.03, pad=0.05)
+        cbar.set_label("Rotation error (deg)")
+
+        ax.legend()
+        plt.tight_layout()
+        plt.show()
 
     return results
 
