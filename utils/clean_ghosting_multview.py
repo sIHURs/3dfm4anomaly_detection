@@ -6,6 +6,7 @@ from tqdm import tqdm
 import os
 import cv2
 import matplotlib.pyplot as plt
+import argparse
 
 def load_colmap_model(colmap_dir):
     cameras, images, points3D = colmap.read_model(colmap_dir, ext=".bin")
@@ -102,18 +103,38 @@ def filter_gaussians(ply_path, sparse_dir, image_dir, output_path,
     new_ply.write(output_path)
     print("Saved:", output_path)
 
-# -----------------------
-# Run
-# -----------------------
+def main():
+    parser = argparse.ArgumentParser(description="Filter Gaussians in point cloud")
+
+    parser.add_argument("--ply_path", type=str, required=True,
+                        help="Path to input .ply file")
+
+    parser.add_argument("--sparse_dir", type=str, required=True,
+                        help="COLMAP sparse directory")
+
+    parser.add_argument("--image_dir", type=str, required=True,
+                        help="Directory of images")
+
+    parser.add_argument("--output_path", type=str, required=True,
+                        help="Path to save filtered output .ply")
+
+    parser.add_argument("--outside_threshold", type=float, default=0.1,
+                        help="Threshold for removing outside Gaussians")
+
+    args = parser.parse_args()
+
+    # Call your function
+    filter_gaussians(
+        ply_path=args.ply_path,
+        sparse_dir=args.sparse_dir,
+        image_dir=args.image_dir,
+        output_path=args.output_path,
+        outside_threshold=args.outside_threshold
+    )
+
+
 if __name__ == "__main__":
-    ply_path = "/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/output/point_cloud/iteration_30000/point_cloud.ply"
-    sparse_dir = "/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/sparse/0"
-    image_dir = "/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/images"
-    output_path = "/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/output/point_cloud/iteration_30000/point_cloud_clean_threshold0_1.ply"
-
-    filter_gaussians(ply_path, sparse_dir, image_dir, output_path,
-                  outside_threshold=0.1)
-
+    main()
 
 # 0.0 broken?
 # 0.03 58376 points
