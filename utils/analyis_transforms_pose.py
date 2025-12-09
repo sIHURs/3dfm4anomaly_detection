@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import argparse, json, numpy as np, matplotlib.pyplot as plt
+import argparse, json, numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
+from matplotlib.colors import Normalize
+import matplotlib.cm as cm
 import pandas as pd
-import colmap
-
+# import colmap
 import torch
 
 def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
@@ -323,43 +326,48 @@ def run_pose_analysis(dir, cls, align=True, save_aligned_pred=None, vis=False, s
         pos_err = np.linalg.norm(C_pred - C_gt, axis=1)  # translation error
         rot_err_deg = r_err_deg if not isinstance(r_err_deg, torch.Tensor) else r_err_deg.cpu().numpy()
 
-        # --- marker size = translation error ---
-        size = 20 + (pos_err / pos_err.max()) * 80
-
         # --- plotting ---
-        fig = plt.figure(figsize=(8,6))
+        fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(111, projection="3d")
 
-        # GT cameras (grey, subtle)
+        # 1) 可选：淡淡标注预测相机位置，方便看整体结构
         ax.scatter(
-            C_gt[:,0], C_gt[:,1], C_gt[:,2],
-            s=18, label="GT", marker='o',
-            c='lightgray', alpha=0.7
-        )
-
-        # Pred cameras: size = translation error, color = rotation error (deg)
-        sc = ax.scatter(
-            C_pred[:,0], C_pred[:,1], C_pred[:,2],
-            s=size,
+            C_pred[:, 0], C_pred[:, 1], C_pred[:, 2],
+            s=10,
+            c='gray',
+            alpha=0.25,
             marker='^',
-            c=rot_err_deg,           # 🔥 rotation error controls color
-            cmap='plasma',
-            edgecolors='k',
-            alpha=0.9,
-            label="Pred"
+            label="Pred (faint)"
         )
 
-        # connecting lines (translation displacement)
-        for a, b in zip(C_gt, C_pred):
-            ax.plot(
-                [a[0], b[0]],
-                [a[1], b[1]],
-                [a[2], b[2]],
-                linewidth=0.4,
-                color='gray',
-                alpha=0.4
-            )
+        # 2) 用 Line3DCollection 画带颜色/粗细的线段表示误差
+        segments = []   # 每个元素是 [[x_gt, y_gt, z_gt], [x_pred, y_pred, z_pred]]
+        widths = []     # 线宽由平移误差控制
+        colors = []     # 线颜色由旋转误差控制
 
+        # 归一化器和 colormap
+        norm = Normalize(vmin=rot_err_deg.min(), vmax=rot_err_deg.max())
+        cmap = cm.get_cmap('plasma')
+
+        pos_err_max = pos_err.max()
+
+        for gt, pred, perr, rerr in zip(C_gt, C_pred, pos_err, rot_err_deg):
+            segments.append([gt, pred])
+            # 线宽：最细 0.5，最粗 3.0，可按喜好调
+            widths.append(0.5 + 2.5 * (perr / pos_err_max))
+            # 颜色：由旋转误差映射
+            colors.append(cmap(norm(rerr)))
+
+        # 创建 3D 线段集合
+        lc = Line3DCollection(
+            segments,
+            colors=colors,
+            linewidths=widths,
+            alpha=0.9
+        )
+        ax.add_collection3d(lc)
+
+        # 3) 画相机坐标轴（如果你还想要的话）
         draw_camera_axes(ax, C_pred, R_pred, convention='opengl', draw_axes=False)
 
         ax.set_xlabel("X")
@@ -367,15 +375,17 @@ def run_pose_analysis(dir, cls, align=True, save_aligned_pred=None, vis=False, s
         ax.set_zlabel("Z")
         ax.set_title(
             "VGGT Camera Estimation Evaluation - 01Gorilla\n"
-            "color = rotation error (deg), size = translation error "
+            "color = rotation error (deg), line width = translation error "
             + ("[aligned]" if align else "")
         )
 
-        # --- colorbar for rotation error ---
-        cbar = plt.colorbar(sc, ax=ax, fraction=0.03, pad=0.05)
+        # 4) 单独给 Line3DCollection 做 colorbar（用同一个 norm & cmap）
+        mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
+        mappable.set_array([])  # 哄一下 colorbar，不需要真实数据
+        cbar = plt.colorbar(mappable, ax=ax, fraction=0.03, pad=0.05)
         cbar.set_label("Rotation error (deg)")
 
-        ax.legend()
+        ax.legend(loc="upper right")
         plt.tight_layout()
         plt.show()
 

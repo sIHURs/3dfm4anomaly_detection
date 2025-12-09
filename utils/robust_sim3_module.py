@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from plyfile import PlyData, PlyElement
 
 def weighted_estimate_se3_torch(source_points, target_points, weights):
     source_points = torch.from_numpy(source_points).cuda().float()
@@ -220,6 +221,51 @@ def print_gpu_memory():
         allocated = torch.cuda.memory_allocated() / 1024**3  # GB
         cached = torch.cuda.memory_reserved() / 1024**3  # GB
         print(f"GPU Memory Allocated: {allocated:.2f} GB, Cached: {cached:.2f} GB")
+
+
+# some test on .ply file
+
+def load_ply_points(path):
+    """
+    返回:
+        xyz: (N,3) float32
+        rgb: (N,3) uint8 或 None
+    """
+    ply = PlyData.read(path)
+    vertex = ply['vertex']
+
+    xyz = np.stack([vertex['x'], vertex['y'], vertex['z']], axis=-1).astype(np.float32)
+
+    if all(c in vertex.data.dtype.names for c in ('red', 'green', 'blue')):
+        rgb = np.stack([vertex['red'], vertex['green'], vertex['blue']], axis=-1).astype(np.uint8)
+    else:
+        rgb = None
+
+    return xyz, rgb
+
+def save_ply_points(path, xyz, rgb=None):
+    """
+    xyz: (N,3)
+    rgb: (N,3) or None
+    """
+    N = xyz.shape[0]
+    if rgb is None:
+        rgb = np.zeros((N, 3), dtype=np.uint8)
+
+    vertex_data = np.empty(N, dtype=[
+        ('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
+        ('red', 'u1'), ('green', 'u1'), ('blue', 'u1')
+    ])
+
+    vertex_data['x'] = xyz[:, 0]
+    vertex_data['y'] = xyz[:, 1]
+    vertex_data['z'] = xyz[:, 2]
+    vertex_data['red']   = rgb[:, 0]
+    vertex_data['green'] = rgb[:, 1]
+    vertex_data['blue']  = rgb[:, 2]
+
+    el = PlyElement.describe(vertex_data, 'vertex')
+    PlyData([el], text=False).write(path)
 
 if __name__ == "__main__":
 
