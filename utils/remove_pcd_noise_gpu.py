@@ -254,28 +254,32 @@ def main():
     parser.add_argument(
         "--ply_path",
         type=str,
-        required=True,
+        # required=True,
+        default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/output/point_cloud/iteration_30000/point_cloud.ply",
         help="Path to input .ply file (3DGS or normal point cloud)",
     )
 
     parser.add_argument(
         "--sparse_dir",
         type=str,
-        required=True,
+        # required=True,
+        default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/distorted/sparse/0",
         help="COLMAP sparse model directory",
     )
 
     parser.add_argument(
         "--image_dir",
         type=str,
-        required=True,
+        # required=True,
+        default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/images",
         help="Directory containing RGBA images",
     )
 
     parser.add_argument(
         "--output_path",
         type=str,
-        required=True,
+        # required=True,
+        default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/output/point_cloud/iteration_30000/point_cloud_clean_threshold0_1_gpu.ply",
         help="Path to save filtered PLY file",
     )
 
