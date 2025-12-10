@@ -12,10 +12,10 @@ import colmap
 
 def load_colmap_model(colmap_dir: str):
     """
-    Load COLMAP cameras and images from a sparse model directory.
+    Load COLMAP cameras, images and points3D from a sparse model directory.
     """
     cameras, images, points3D = colmap.read_model(colmap_dir, ext=".bin")
-    return cameras, images
+    return cameras, images, points3D
 
 
 def detect_ply_type(vertex, fallback: str = "pointcloud") -> str:
@@ -155,7 +155,7 @@ def filter_gaussians_torch(
     return keep_np
 
 
-def filter_gaussians(
+def filter_gaussians_3dgs_ply(
     ply_path: str,
     sparse_dir: str,
     image_dir: str,
@@ -165,12 +165,9 @@ def filter_gaussians(
     device: str = "cuda",
 ):
     """
-    High-level function:
-      - Load PLY
-      - Load COLMAP model
-      - Load RGBA masks
-      - Call the Torch-based filtering
-      - Write filtered PLY
+    3DGS mode:
+      - Input: 3DGS PLY
+      - Output: filtered 3DGS PLY (same structure, fewer vertices)
     """
 
     # Load PLY
@@ -187,6 +184,9 @@ def filter_gaussians(
         ply_type = input_type
         print(f"[INFO] Using user-specified PLY type: {ply_type}")
 
+    if ply_type != "3dgs":
+        print("[WARN] PLY does not look like 3DGS, but proceeding anyway.")
+
     # Ensure xyz exists
     if not all(name in vertex.data.dtype.names for name in ("x", "y", "z")):
         raise RuntimeError(
@@ -198,7 +198,7 @@ def filter_gaussians(
     print(f"Loaded {N} points from {ply_type} PLY: {ply_path}")
 
     # Load COLMAP cameras & images
-    cameras, images = load_colmap_model(sparse_dir)
+    cameras, images, _ = load_colmap_model(sparse_dir)
     images_list = list(images.values())
     print(f"Loaded {len(images_list)} COLMAP images from: {sparse_dir}")
 
@@ -243,44 +243,125 @@ def filter_gaussians(
         text=ply.text,
     )
     new_ply.write(output_path)
-    print("Saved:", output_path)
+    print("Saved PLY:", output_path)
+
+
+def filter_colmap_points(
+    sparse_dir: str,
+    image_dir: str,
+    output_sparse_dir: str,
+    outside_threshold: float = 0.6,
+    device: str = "cuda",
+):
+    """
+    COLMAP mode:
+      - Input: COLMAP sparse model (cameras.bin, images.bin, points3D.bin)
+      - Output: filtered COLMAP sparse model (same .bin format, fewer points3D)
+
+    This keeps cameras and images unchanged and only filters points3D,
+    so you get a 'cleaned' points3D.bin that can be used for 3DGS training.
+    """
+
+    # Load COLMAP model
+    cameras, images, points3D = load_colmap_model(sparse_dir)
+    images_list = list(images.values())
+    print(f"[COLMAP] Loaded {len(images_list)} images and {len(points3D)} points from: {sparse_dir}")
+
+    # Build xyz array from points3D
+    point_ids = list(points3D.keys())
+    pts = np.stack([points3D[pid].xyz for pid in point_ids], axis=0)
+    N = pts.shape[0]
+    print(f"[COLMAP] Total points3D: {N}")
+
+    # Load alpha masks for all images
+    mask_cache_np = {}
+    for img in images_list:
+        img_path = os.path.join(image_dir, img.name)
+        rgba = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+
+        if rgba is None or rgba.shape[2] != 4:
+            raise RuntimeError(
+                f"Cannot read RGBA image (4 channels required): {img_path}"
+            )
+
+        alpha = rgba[:, :, 3]
+        _, mask = cv2.threshold(alpha, 0, 255, cv2.THRESH_BINARY)
+        mask_cache_np[img.id] = mask
+
+    # Decide device
+    if device == "cuda" and not torch.cuda.is_available():
+        print("[WARN] CUDA not available, falling back to CPU.")
+        device = "cpu"
+
+    # Run Torch-based filtering on COLMAP points
+    keep = filter_gaussians_torch(
+        pts_np=pts,
+        cameras=cameras,
+        images=images,
+        mask_cache_np=mask_cache_np,
+        outside_threshold=outside_threshold,
+        device=device,
+    )
+
+    # Subset points3D dict
+    kept_ids = [pid for pid, k in zip(point_ids, keep) if k]
+    new_points3D = {pid: points3D[pid] for pid in kept_ids}
+    print(f"[COLMAP] Remaining points3D: {len(new_points3D)} / {len(points3D)}")
+
+    # Write out new COLMAP model (same cameras & images, filtered points3D)
+    os.makedirs(output_sparse_dir, exist_ok=True)
+    colmap.write_model(
+        cameras=cameras,
+        images=images,
+        points3D=new_points3D,
+        path=output_sparse_dir,
+        ext=".bin",
+    )
+    print(f"[COLMAP] Saved filtered model to: {output_sparse_dir}")
+    print("  - cameras.bin")
+    print("  - images.bin")
+    print("  - points3D.bin")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Filter Gaussian / point cloud PLY using RGBA alpha masks (Torch GPU version)"
+        description="Filter Gaussian / point cloud using RGBA alpha masks (Torch GPU). "
+                    "Supports 3DGS PLY and COLMAP .bin models."
     )
 
     parser.add_argument(
         "--ply_path",
         type=str,
-        # required=True,
-        default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/output/point_cloud/iteration_30000/point_cloud.ply",
-        help="Path to input .ply file (3DGS or normal point cloud)",
+        # default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/output/point_cloud/iteration_30000/point_cloud.ply",
+        help="Path to input 3DGS .ply file (used only when input_type='3dgs').",
     )
 
     parser.add_argument(
         "--sparse_dir",
         type=str,
-        # required=True,
-        default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/distorted/sparse/0",
-        help="COLMAP sparse model directory",
+        required=True,
+        # default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/distorted/sparse/0",
+        help="COLMAP sparse model directory (cameras.bin, images.bin, points3D.bin).",
     )
 
     parser.add_argument(
         "--image_dir",
         type=str,
-        # required=True,
-        default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/images",
-        help="Directory containing RGBA images",
+        required=True,
+        # default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/images",
+        help="Directory containing RGBA images (alpha used as mask).",
     )
 
     parser.add_argument(
         "--output_path",
         type=str,
-        # required=True,
-        default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/output/point_cloud/iteration_30000/point_cloud_clean_threshold0_1_gpu.ply",
-        help="Path to save filtered PLY file",
+        required=True,
+        # default="/home/yifan/studium/master_thesis/Anomaly_Detection/3dfm4anomaly_detection/scripts/experiment_MAD_Sim_vggt_3dgs_fixCenter_withPoseError_withGhosting/01Gorilla/output/point_cloud/iteration_30000/point_cloud_clean_threshold0_1_gpu.ply",
+        help=(
+            "If input_type='3dgs': path to save filtered PLY.\n"
+            "If input_type='colmap': directory to save filtered COLMAP model "
+            "(cameras.bin, images.bin, points3D.bin)."
+        ),
     )
 
     parser.add_argument(
@@ -288,19 +369,17 @@ def main():
         type=float,
         default=0.1,
         help="Max allowed outside-projection ratio per point "
-             "(points with ratio >= threshold are removed)",
+             "(points with ratio >= threshold are removed).",
     )
 
     parser.add_argument(
         "--input_type",
         type=str,
-        default="auto",
-        choices=["auto", "3dgs", "pointcloud"],
+        default="3dgs",
+        choices=["3dgs", "colmap"],
         help=(
-            "Type of input PLY:\n"
-            "'auto'        = auto-detect from PLY fields (default)\n"
-            "'3dgs'        = treat as Gaussian Splatting PLY\n"
-            "'pointcloud'  = treat as standard point cloud PLY"
+            "'3dgs'  = input is 3DGS PLY and output is filtered PLY.\n"
+            "'colmap'= input is COLMAP sparse model (.bin) and output is filtered .bin model."
         ),
     )
 
@@ -309,27 +388,52 @@ def main():
         type=str,
         default="cuda",
         choices=["cuda", "cpu"],
-        help="Device to run filtering on (default: cuda, falls back to cpu if not available)",
+        help="Device to run filtering on (default: cuda, falls back to cpu if not available).",
     )
 
     args = parser.parse_args()
 
-    filter_gaussians(
-        ply_path=args.ply_path,
-        sparse_dir=args.sparse_dir,
-        image_dir=args.image_dir,
-        output_path=args.output_path,
-        outside_threshold=args.outside_threshold,
-        input_type=args.input_type,
-        device=args.device,
-    )
+    if args.input_type == "3dgs":
+        filter_gaussians_3dgs_ply(
+            ply_path=args.ply_path,
+            sparse_dir=args.sparse_dir,
+            image_dir=args.image_dir,
+            output_path=args.output_path,
+            outside_threshold=args.outside_threshold,
+            input_type="3dgs",
+            device=args.device,
+        )
+    elif args.input_type == "colmap":
+        filter_colmap_points(
+            sparse_dir=args.sparse_dir,
+            image_dir=args.image_dir,
+            output_sparse_dir=args.output_path,
+            outside_threshold=args.outside_threshold,
+            device=args.device,
+        )
+    else:
+        raise ValueError(f"Unknown input_type: {args.input_type}")
 
 
 if __name__ == "__main__":
     main()
 
-# Example thresholds:
-# 0.0  => broken?
-# 0.03 => 58376 points
-# 0.05 => 66036 points
-# 0.1  => ...
+'''
+examples:
+
+python remove_pcd_noise_gpu.py \
+  --input_type 3dgs \
+  --ply_path /path/to/point_cloud.ply \
+  --sparse_dir /path/to/distorted/sparse/0 \
+  --image_dir /path/to/images \
+  --output_path /path/to/point_cloud_clean.ply \
+  --outside_threshold 0.1
+
+python remove_pcd_noise_gpu.py \
+  --input_type colmap \
+  --sparse_dir /path/to/distorted/sparse/0 \
+  --image_dir /path/to/images \
+  --output_path /path/to/distorted/sparse_clean \
+  --outside_threshold 0.1
+
+'''
