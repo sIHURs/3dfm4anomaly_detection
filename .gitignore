@@ -169,3 +169,5 @@ notebooks
 scripts
 cub-1.10.0
 *.html
+
+experiments/
