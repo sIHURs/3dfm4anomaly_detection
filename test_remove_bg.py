@@ -53,8 +53,8 @@ def bg_to_transparent_hsv(input_dir, output_dir,
 
 
 # 示例用法
-input_folder = "scripts/demo_PIAD_real_vggt_3dgs/01Valve/images_bg"              # 你的自定义 images 文件夹
-output_folder = "scripts/demo_PIAD_real_vggt_3dgs/01Valve/images" # 输出透明结果
+input_folder = "scripts/demo_PIAD_Sim_vggt_3dgs/motor/images_bg"              # 你的自定义 images 文件夹
+output_folder = "scripts/demo_PIAD_Sim_vggt_3dgs/motor/images" # 输出透明结果
 
 bg_to_transparent_hsv(input_folder, output_folder,
                       s_thresh=40, v_thresh=200)

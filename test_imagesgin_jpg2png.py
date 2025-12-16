@@ -89,4 +89,4 @@ def overwrite_jpg_to_png(images_bin_path):
 # ---------------------
 # Use:
 # ---------------------
-overwrite_jpg_to_png("/home/wangyifa/tmp/3dfm4anomaly_detection/scripts/demo_PIAD_real_vggt_3dgs/01Valve/sparse/0/images.bin")
+overwrite_jpg_to_png("scripts/demo_PIAD_Sim_vggt_3dgs/motor/sparse/0/images.bin")
