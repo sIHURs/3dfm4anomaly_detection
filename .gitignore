@@ -171,3 +171,6 @@ cub-1.10.0
 *.html
 
 experiments/
+
+*.pth
+*.zip
