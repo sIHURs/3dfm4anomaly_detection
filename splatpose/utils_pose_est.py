@@ -13,6 +13,10 @@ from PAD_utils.loftr import LoFTR, default_cfg
 import cv2
 from gaussian_splatting.scene.colmap_loader import *
 
+# solve path problem
+from pathlib import Path
+CKPT_PATH = Path(__file__).resolve().parents[1] / "splatpose" /"PAD_utils" / "model" / "indoor_ds_new.ckpt"
+
 dilate_size = 8
 img_size = 800
 img_len = img_size
@@ -387,7 +391,7 @@ def pose_retrieval_loftr(imgs,obs_img,poses):
     _default_cfg = deepcopy(default_cfg)
     _default_cfg['coarse']['temp_bug_fix'] = True  # set to False when using the old ckpt
     matcher = LoFTR(config=_default_cfg)
-    matcher.load_state_dict(torch.load("PAD_utils/model/indoor_ds_new.ckpt")['state_dict'])
+    matcher.load_state_dict(torch.load(str(CKPT_PATH))["state_dict"])
     matcher = matcher.eval().cuda()
     if obs_img.shape[-1] == 3:
         query_img = cv2.cvtColor(obs_img, cv2.COLOR_RGB2GRAY)
@@ -468,8 +472,16 @@ class DefectDataset(Dataset):
                                                    ])
         root = os.path.join(dataset_dir, class_name)
         set_dir = os.path.join(root, set)
-        subclass = os.listdir(set_dir)
-        subclass.sort()
+        entries = os.listdir(set_dir)
+        entries.sort()
+
+        sub_dirs = [e for e in entries if os.path.isdir(os.path.join(set_dir, e))]
+        if len(sub_dirs) == 0:
+            subclass = ["good"]
+            subclass_to_imgdir = {"good": set_dir}
+        else:
+            subclass = sub_dirs
+            subclass_to_imgdir = {sc: os.path.join(set_dir, sc) for sc in subclass}
 
         self.pretrained_params = None
 
@@ -491,14 +503,14 @@ class DefectDataset(Dataset):
         self.width, self.height = None, None
         class_counter = 1
         for sc in subclass:
-            if sc == 'good' or sc == "nerf":
+            sc_low = sc.lower()
+            if sc_low == "good" or sc_low.startswith("good") or sc_low == "nerf":
                 label = 0
             else:
                 label = class_counter
                 self.class_names.append(sc)
                 class_counter += 1
-            sub_dir = os.path.join(set_dir, sc)
-            img_dir = sub_dir
+            img_dir = subclass_to_imgdir[sc]
             img_paths = os.listdir(img_dir)
             img_paths.sort()
             for p in img_paths:
@@ -509,7 +521,9 @@ class DefectDataset(Dataset):
                 self.images.append(i_path)
                 self.labels.append(label)
                 if self.set == 'test' and self.get_mask:
-                    extension = '_mask' if sc != 'good' else ''
+                    # extension = '_mask' if sc != 'good' else ''
+                    # tmp fix
+                    extension = ''
                     mask_path = os.path.join(root, 'ground_truth', sc, p[:-4] + extension + p[-4:])
                     self.masks.append(mask_path)
                 elif self.get_mask:

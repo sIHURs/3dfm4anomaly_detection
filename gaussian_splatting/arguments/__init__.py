@@ -99,8 +99,8 @@ class OptimizationParams(ParamGroup):
         self.optimizer_type = "default"
         super().__init__(parser, "Optimization Parameters")
 
-def get_combined_args(parser : ArgumentParser):
-    cmdlne_string = sys.argv[1:]
+def get_combined_args(parser : ArgumentParser, my_cmdline = None):
+    cmdlne_string = sys.argv[1:] if my_cmdline is None else my_cmdline
     cfgfile_string = "Namespace()"
     args_cmdline = parser.parse_args(cmdlne_string)
 

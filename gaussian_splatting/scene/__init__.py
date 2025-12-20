@@ -14,7 +14,7 @@ import random
 import json
 from gaussian_splatting.utils.system_utils import searchForMaxIteration
 from gaussian_splatting.scene.dataset_readers import sceneLoadTypeCallbacks
-from gaussian_splatting.scene.gaussian_model import GaussianModel
+from gaussian_splatting.scene.gaussian_model import GaussianModel, DiffGaussianModel
 from gaussian_splatting.arguments import ModelParams
 from gaussian_splatting.utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 

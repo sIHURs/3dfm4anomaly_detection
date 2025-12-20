@@ -2,7 +2,7 @@ import os
 
 from gaussian_splatting.utils.loss_utils import l1_loss, ssim
 from gaussian_splatting.gaussian_renderer import render
-from gaussian_splatting.scene import DiffGaussianModel
+from gaussian_splatting.scene.gaussian_model import DiffGaussianModel
 from argparse import ArgumentParser
 from gaussian_splatting.arguments import ModelParams, PipelineParams
 from gaussian_splatting.render import *
@@ -14,13 +14,17 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from utils_pose_est import DefectDataset, pose_retrieval_loftr, camera_transf
 
+from torchvision.transforms.functional import to_pil_image
+
+
 classnames = ["01Gorilla", "02Unicorn", "03Mallard", "04Turtle", "05Whale", "06Bird", "07Owl", "08Sabertooth",
               "09Swan", "10Sheep", "11Pig", "12Zalika", "13Pheonix", "14Elephant", "15Parrot", "16Cat", "17Scorpion",
               "18Obesobeso", "19Bear", "20Puppy"]
 
-def main_pose_estimation(cur_class, model_dir_location, k=150, verbose=False, data_dir=None):
+def main_pose_estimation(cur_class, result_dir, model_dir_location, k=150, verbose=False, data_dir=None):
     
-    model_dir = model_dir_location
+    result_dir = result_dir
+    model_dir = os.path.join(model_dir_location, "output")
     data_dir = "MAD-Sim/" if data_dir is None else data_dir
     trainset = DefectDataset(data_dir, cur_class, "train", True, True)
 
@@ -49,7 +53,7 @@ def main_pose_estimation(cur_class, model_dir_location, k=150, verbose=False, da
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
     
     if verbose:
-        save_to = os.path.join(model_dir_location, "3dgs_imgs")
+        save_to = os.path.join(result_dir, "3dgs_imgs")
         os.makedirs(save_to, exist_ok=True)
 
     start = torch.cuda.Event(enable_timing=True)
@@ -96,14 +100,32 @@ def main_pose_estimation(cur_class, model_dir_location, k=150, verbose=False, da
         gaussians.load_ply(os.path.join(model_dir,
                                         "point_cloud",
                                         "iteration_" + str(30000),
-                                        "point_cloud.ply"))
+                                        "point_cloud_clean_t0.200.ply"))
         init_image = None
+
+        # todo: tmp hard coded
+        resolution = (800, 800)
+        # new version requires pil image input
+        img = set_entry[0]
+        if img.ndim == 3 and img.shape[0] in (1,3,4):  # CHW
+            pil_img = to_pil_image(img)
+        else:  # HWC
+            pil_img = to_pil_image(img.permute(2,0,1))
 
         for iters in range(k):
             optimizer.zero_grad()
-            cur_view = Camera(colmap_id=123, R=c2w_init[:3,:3].cpu().numpy(), T=c2w_init[:3,3].cpu().numpy(),
-                            FoVx=camera_angle_x, FoVy=camera_angle_x,
-                            image=set_entry[0], gt_alpha_mask=None, image_name="aha", uid=123)
+            cur_view = Camera(colmap_id=123, 
+                            R=c2w_init[:3,:3].cpu().numpy(),
+                            T=c2w_init[:3,3].cpu().numpy(),
+                            FoVx=camera_angle_x, 
+                            FoVy=camera_angle_x,
+                            image=pil_img, 
+                            image_name="aha", 
+                            depth_params=None,
+                            invdepthmap=None,
+                            resolution=resolution,
+                            uid=123)
+            gaussians.prepare_forward() 
             rendering = render(cur_view, gaussians, pipeline, background)["render"]
 
             if init_image is None:
@@ -160,11 +182,6 @@ def main_pose_estimation(cur_class, model_dir_location, k=150, verbose=False, da
         end.record()
         torch.cuda.synchronize()
         times.append(start.elapsed_time(end))
-
-        
-    print("all labels:", all_labels, len(all_labels))
-    for i in range(5):
-        print(f"norm: {normal_images[i].shape}. ref: {reference_images[i].shape}. gt: {gt_masks[i].shape}")
     
     assert len(normal_images) == len(reference_images) == len(testset), f"Wrongly sized sets!" \
                                                                          f"{len(normal_images)}. {len(reference_images)}. {len(testset)}"

@@ -27,6 +27,8 @@ try:
 except:
     pass
 
+from gaussian_splatting.scene.colmap_loader import quat_mul, quaternion_invert, qvec2rotmat
+
 class GaussianModel:
 
     def setup_functions(self):
@@ -471,3 +473,28 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+
+
+
+class DiffGaussianModel(GaussianModel):
+
+    def __init__(self, sh_degree: int, init_pose, cam_transf):
+        super().__init__(sh_degree)
+        self.init_pose = init_pose
+        self.cam_transf = cam_transf
+        self.R = None
+        self.T = None
+        self.r_quat = None
+
+    def prepare_forward(self):
+        self.R, self.T, self.r_quat = self.cam_transf()
+       
+    @property
+    def get_xyz(self):
+        return self._xyz @ self.R + self.T[None,...]
+
+    @property
+    def get_rotation(self):
+        return self.rotation_activation(quat_mul(torch.broadcast_to(quaternion_invert(self.r_quat), (self._rotation.shape[0], 4)),
+                                                 self._rotation))
+        
