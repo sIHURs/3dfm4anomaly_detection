@@ -14,9 +14,9 @@ from easydict import EasyDict
 import yaml
 from PIL import Image
 
-from splatpose.pose_estimation import main_pose_estimation
-from splatpose.utils_pose_est import ModelHelper, update_config
-from splatpose.aupro import calculate_au_pro_au_roc
+from factory.splatpose.pose_estimation import main_pose_estimation
+from factory.splatpose.utils_pose_est import ModelHelper, update_config
+from factory.splatpose.aupro import calculate_au_pro_au_roc
 
 # solve path problem
 from pathlib import Path

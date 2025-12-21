@@ -12,17 +12,17 @@
 import os
 import torch
 from random import randint
-from gaussian_splatting.utils.loss_utils import l1_loss, ssim
-from gaussian_splatting.gaussian_renderer import render, network_gui
+from factory.gaussian_splatting.utils.loss_utils import l1_loss, ssim
+from factory.gaussian_splatting.gaussian_renderer import render, network_gui
 import sys
-from gaussian_splatting.scene import Scene, GaussianModel
-from gaussian_splatting.utils.general_utils import safe_state, get_expon_lr_func
+from factory.gaussian_splatting.scene import Scene, GaussianModel
+from factory.gaussian_splatting.utils.general_utils import safe_state, get_expon_lr_func
 import uuid
 from tqdm import tqdm
 from torchvision.utils import save_image
-from gaussian_splatting.utils.image_utils import psnr
+from factory.gaussian_splatting.utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
-from gaussian_splatting.arguments import ModelParams, PipelineParams, OptimizationParams
+from factory.gaussian_splatting.arguments import ModelParams, PipelineParams, OptimizationParams
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True

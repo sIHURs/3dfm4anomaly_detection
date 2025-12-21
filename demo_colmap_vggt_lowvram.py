@@ -22,15 +22,16 @@ import argparse
 from pathlib import Path
 import trimesh
 import pycolmap
+import cv2
 
 
-from vggt_low_vram.vggt.models.vggt import VGGT
-from vggt_low_vram.vggt.utils.load_fn import load_and_preprocess_images_square
-from vggt_low_vram.vggt.utils.pose_enc import pose_encoding_to_extri_intri
-from vggt_low_vram.vggt.utils.geometry import unproject_depth_map_to_point_map
-from vggt_low_vram.vggt.utils.helper import create_pixel_coordinate_grid, randomly_limit_trues
-from vggt_low_vram.vggt.dependency.track_predict import predict_tracks
-from vggt_low_vram.vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pycolmap, batch_np_matrix_to_pycolmap_wo_track
+from factory.vggt_low_vram.vggt.models.vggt import VGGT
+from factory.vggt_low_vram.vggt.utils.load_fn import load_and_preprocess_images_square
+from factory.vggt_low_vram.vggt.utils.pose_enc import pose_encoding_to_extri_intri
+from factory.vggt_low_vram.vggt.utils.geometry import unproject_depth_map_to_point_map
+from factory.vggt_low_vram.vggt.utils.helper import create_pixel_coordinate_grid, randomly_limit_trues
+from factory.vggt_low_vram.vggt.dependency.track_predict import predict_tracks
+from factory.vggt_low_vram.vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pycolmap, batch_np_matrix_to_pycolmap_wo_track
 
 
 # TODO: add support for masks
@@ -38,7 +39,6 @@ from vggt_low_vram.vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pyco
 # TODO: add support for radial distortion, which needs extra_params
 # TODO: test with more cases
 # TODO: test different camera types
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="VGGT Demo")
@@ -66,7 +66,98 @@ def parse_args():
         "--adjust_folder", action="store_true", default=True, help="adjust the folder structure to match COLMAP format"
     )
 
+
+    # todo: add more parameters for testing & experiments @yifan
+    parser.add_argument("--save_depth", action="store_true", default=False, help="Save depth map and confidence map")
+
     return parser.parse_args()
+
+
+
+''' help functions @yifan '''
+
+def save_depth_outputs(depth_map, depth_conf, out_dir, prefix="vggt"):
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Tensor → CPU → NumPy
+    if torch.is_tensor(depth_map):
+        depth_map = depth_map.detach().cpu().numpy()
+    if torch.is_tensor(depth_conf):
+        depth_conf = depth_conf.detach().cpu().numpy()
+
+    np.save(os.path.join(out_dir, "verbose", f"{prefix}_depth.npy"), depth_map)
+    np.save(os.path.join(out_dir, "verbose", f"{prefix}_depth_conf.npy"), depth_conf)
+
+    print(f"[OK] Saved depth_map and depth_conf to {out_dir}")
+
+def save_depth_png(depth, path, vmin=None, vmax=None):
+    depth = depth.astype(np.float32)
+
+    if vmin is None:
+        vmin = np.percentile(depth, 2)
+    if vmax is None:
+        vmax = np.percentile(depth, 98)
+
+    depth_norm = (depth - vmin) / (vmax - vmin + 1e-6)
+    depth_norm = np.clip(depth_norm, 0, 1)
+
+    depth_uint8 = (depth_norm * 255).astype(np.uint8)
+    cv2.imwrite(path, depth_uint8)
+
+def restructure_scene_dir(args):
+    """
+    Original folder structure:
+      scene_dir/
+        images/
+        sparse/
+          0/
+            images.bin
+            cameras.bin
+            points3D.bin
+
+    Target folder structure:
+      scene_dir/
+        input/
+        distorted/
+          sparse/
+            0/
+              images.bin
+              cameras.bin
+              points3D.bin
+    """
+    output_dir = args.output_dir
+    images_dir = os.path.join(output_dir, "images")
+    sparse_dir = os.path.join(output_dir, "sparse")
+
+    # Target paths
+    input_dir = os.path.join(output_dir, "input")
+    new_sparse_dir = os.path.join(output_dir, "distorted", "sparse", "0")
+    os.makedirs(new_sparse_dir, exist_ok=True)
+
+    # 1️⃣ Rename "images" to "input"
+    if os.path.exists(images_dir):
+        if os.path.exists(input_dir):
+            print(f"⚠️ Target directory already exists: {input_dir}, skipping rename.")
+        else:
+            shutil.move(images_dir, input_dir)
+            print(f"✅ Renamed 'images' to 'input'")
+
+    # 2️⃣ Move files from "sparse/0" to "distorted/sparse/0"
+    if os.path.exists(sparse_dir):
+        for file_name in os.listdir(sparse_dir):
+            src = os.path.join(sparse_dir, file_name)
+            dst = os.path.join(new_sparse_dir, file_name)
+            if os.path.isfile(src):
+                shutil.move(src, dst)
+        print(f"✅ Moved contents of 'sparse/0' to {new_sparse_dir}")
+
+    # 3️⃣ Delete the old "sparse" directory
+    old_sparse_root = os.path.join(output_dir, "sparse")
+    if os.path.exists(old_sparse_root):
+        shutil.rmtree(old_sparse_root)
+        print(f"🗑️ Removed old 'sparse' folder")
+
+    print(f"🎯 Folder structure successfully adjusted: {output_dir}")
 
 
 def run_VGGT(model, images, device, dtype, resolution=518):
@@ -147,6 +238,33 @@ def demo_fn(args):
     extrinsic, intrinsic, depth_map, depth_conf = run_VGGT(model, images, device, dtype, vggt_fixed_resolution)
     points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
     # images = images.float()
+
+    if args.save_depth:
+        os.makedirs(args.output_dir, exist_ok=True)
+        depth_map_dir = os.path.join(args.output_dir, "verbose", "depth_map")
+        depth_conf_dir = os.path.join(args.output_dir, "verbose", "depth_conf_map")
+        os.makedirs(depth_map_dir, exist_ok=True)
+        os.makedirs(depth_conf_dir, exist_ok=True)
+        
+        save_depth_outputs(depth_map, depth_conf, out_dir=args.output_dir, prefix="vggt")
+
+        for i in range(depth_map.shape[0]):
+            # save depth map
+            save_depth_png(
+                depth_map[i],
+                os.path.join(args.output_dir, "verbose", "depth_map", f"depth_{i:03d}.png")
+            )
+            # save depth confidence map
+            c = depth_conf[i]
+            c_np = c.detach().float().cpu().numpy() if torch.is_tensor(c) else c.astype(np.float32)
+            vmin = np.percentile(c_np, 5)
+            vmax = np.percentile(c_np, 95)
+            save_depth_png(
+                c_np,
+                os.path.join(args.output_dir, "verbose", "depth_conf_map", f"depth_conf_{i:03d}.png"),
+                vmin=vmin,
+                vmax=vmax
+            )
 
     del model  # free memory
     torch.cuda.empty_cache()
@@ -308,60 +426,6 @@ def rename_colmap_recons_and_rescale_camera(
 
     return reconstruction
 
-def restructure_scene_dir(args):
-    """
-    Original folder structure:
-      scene_dir/
-        images/
-        sparse/
-          0/
-            images.bin
-            cameras.bin
-            points3D.bin
-
-    Target folder structure:
-      scene_dir/
-        input/
-        distorted/
-          sparse/
-            0/
-              images.bin
-              cameras.bin
-              points3D.bin
-    """
-    output_dir = args.output_dir
-    images_dir = os.path.join(output_dir, "images")
-    sparse_dir = os.path.join(output_dir, "sparse")
-
-    # Target paths
-    input_dir = os.path.join(output_dir, "input")
-    new_sparse_dir = os.path.join(output_dir, "distorted", "sparse", "0")
-    os.makedirs(new_sparse_dir, exist_ok=True)
-
-    # 1️⃣ Rename "images" to "input"
-    if os.path.exists(images_dir):
-        if os.path.exists(input_dir):
-            print(f"⚠️ Target directory already exists: {input_dir}, skipping rename.")
-        else:
-            shutil.move(images_dir, input_dir)
-            print(f"✅ Renamed 'images' to 'input'")
-
-    # 2️⃣ Move files from "sparse/0" to "distorted/sparse/0"
-    if os.path.exists(sparse_dir):
-        for file_name in os.listdir(sparse_dir):
-            src = os.path.join(sparse_dir, file_name)
-            dst = os.path.join(new_sparse_dir, file_name)
-            if os.path.isfile(src):
-                shutil.move(src, dst)
-        print(f"✅ Moved contents of 'sparse/0' to {new_sparse_dir}")
-
-    # 3️⃣ Delete the old "sparse" directory
-    old_sparse_root = os.path.join(output_dir, "sparse")
-    if os.path.exists(old_sparse_root):
-        shutil.rmtree(old_sparse_root)
-        print(f"🗑️ Removed old 'sparse' folder")
-
-    print(f"🎯 Folder structure successfully adjusted: {output_dir}")
 
 
 if __name__ == "__main__":

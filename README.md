@@ -47,7 +47,7 @@ conda install -c conda-forge colmap
 pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu129
 
 # other depencies
-pip install -r requirements.txt
+pip install --no-build-isolation -r requirements.txt
 
 # locally build
 

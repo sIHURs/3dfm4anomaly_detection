@@ -1,3 +1,5 @@
+# env info: torch2.8.0 + cuda12.9
+
 matplotlib
 Pillow
 ninja
@@ -18,3 +20,18 @@ safetensors
 pycolmap==3.10.0
 glm
 tensorboard
+skvideo
+jaxtyping
+dacite
+lightning
+xformers==v0.0.32.post2
+
+# build torch-scatter
+# pip install torch-scatter -f https://data.pyg.org/whl/torch-2.8.0+${CUDA}.html
+e3nn
+
+# build gsplat
+# pip install --no-build-isolation git+https://github.com/nerfstudio-project/gsplat.git
+git+https://github.com/nerfstudio-project/gsplat.git
+
+colorspacious
