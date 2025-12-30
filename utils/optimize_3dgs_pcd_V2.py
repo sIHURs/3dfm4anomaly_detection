@@ -12,16 +12,16 @@ import colmap
 
 # For analysis & plots
 import matplotlib
-matplotlib.use("Agg")  # headless 环境安全
+matplotlib.use("Agg")  # headless
 import matplotlib.pyplot as plt
 
 # 3DGS imports
-from gaussian_splatting.arguments import ModelParams, PipelineParams
-from gaussian_splatting.utils.general_utils import safe_state
-from gaussian_splatting.scene import Scene, GaussianModel
-from gaussian_splatting.gaussian_renderer import render
-from gaussian_splatting.utils.loss_utils import l1_loss, ssim
-from gaussian_splatting.utils.image_utils import psnr
+from factory.gaussian_splatting.arguments import ModelParams, PipelineParams
+from factory.gaussian_splatting.utils.general_utils import safe_state
+from factory.gaussian_splatting.scene import Scene, GaussianModel
+from factory.gaussian_splatting.gaussian_renderer import render
+from factory.gaussian_splatting.utils.loss_utils import l1_loss, ssim
+from factory.gaussian_splatting.utils.image_utils import psnr
 
 try:
     from fused_ssim import fused_ssim

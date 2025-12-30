@@ -21,18 +21,19 @@ classnames = ["01Gorilla", "02Unicorn", "03Mallard", "04Turtle", "05Whale", "06B
               "09Swan", "10Sheep", "11Pig", "12Zalika", "13Pheonix", "14Elephant", "15Parrot", "16Cat", "17Scorpion",
               "18Obesobeso", "19Bear", "20Puppy"]
 
-def main_pose_estimation(cur_class, result_dir, model_dir_location, k=150, verbose=False, data_dir=None):
+def main_pose_estimation(cur_class, result_dir, model_dir_location, k=150, verbose=False, data_dir=None, pcd_name="point_cloud.ply", json_name="transforms.json"):
     
     result_dir = result_dir
-    model_dir = os.path.join(model_dir_location, "output")
+    output_dir = os.path.join(model_dir_location, "output")
+    model_dir = output_dir if os.path.isdir(output_dir) else model_dir_location
     data_dir = "MAD-Sim/" if data_dir is None else data_dir
-    trainset = DefectDataset(data_dir, cur_class, "train", True, True)
+    trainset = DefectDataset(data_dir, cur_class, "train", True, True, gt_file=json_name)
 
     train_imgs = torch.cat([a[0][None,...] for a in trainset], dim=0)
     train_poses = np.concatenate([np.array(a["transform_matrix"])[None,...] for a in trainset.camera_transforms["frames"]])
     train_imgs = torch.movedim(torch.nn.functional.interpolate(train_imgs, (400,400)), 1, 3).numpy()
     
-    testset = DefectDataset(data_dir, cur_class, "test", True, True)
+    testset = DefectDataset(data_dir, cur_class, "test", True, True, gt_file=json_name)
     camera_angle_x = trainset.camera_angle
 
     # Set up command line argument parser
@@ -100,7 +101,7 @@ def main_pose_estimation(cur_class, result_dir, model_dir_location, k=150, verbo
         gaussians.load_ply(os.path.join(model_dir,
                                         "point_cloud",
                                         "iteration_" + str(30000),
-                                        "point_cloud_clean_t0.200.ply"))
+                                        pcd_name))
         init_image = None
 
         # todo: tmp hard coded

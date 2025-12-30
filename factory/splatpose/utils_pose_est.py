@@ -458,7 +458,7 @@ def downsampling(x, size, to_tensor=False, bin=True):
 
 class DefectDataset(Dataset):
     def __init__(self, dataset_dir, class_name, set='train', get_mask=True, get_features=True,
-                 train_subset=None):
+                 train_subset=None, gt_file="transforms.json"):
         super(DefectDataset, self).__init__()
         self.set = set
         self.labels = list()
@@ -485,7 +485,7 @@ class DefectDataset(Dataset):
 
         self.pretrained_params = None
 
-        with open(os.path.join(root, "transforms.json"), "r") as f:
+        with open(os.path.join(root, gt_file), "r") as f:
             self.camera_transforms = json.load(f)
 
         self.camera_angle = self.camera_transforms["camera_angle_x"] if set == "train" else None
@@ -521,9 +521,9 @@ class DefectDataset(Dataset):
                 self.images.append(i_path)
                 self.labels.append(label)
                 if self.set == 'test' and self.get_mask:
-                    # extension = '_mask' if sc != 'good' else ''
+                    extension = '_mask' if sc != 'good' else ''
                     # tmp fix
-                    extension = ''
+                    # extension = ''
                     mask_path = os.path.join(root, 'ground_truth', sc, p[:-4] + extension + p[-4:])
                     self.masks.append(mask_path)
                 elif self.get_mask:

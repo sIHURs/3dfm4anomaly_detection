@@ -20,7 +20,7 @@ from factory.splatpose.aupro import calculate_au_pro_au_roc
 
 # solve path problem
 from pathlib import Path
-PAD_CONFIG_PATH = Path(__file__).resolve().parents[1] / "3dfm4anomaly_detection" / "splatpose" /"PAD_utils" / "config_effnet.yaml"
+PAD_CONFIG_PATH = Path(__file__).resolve().parents[1] / "3dfm4anomaly_detection" / "factory" / "splatpose" /"PAD_utils" / "config_effnet.yaml"
 
 
 MAD_classnames = ["01Gorilla", "02Unicorn", "03Mallard", "04Turtle", "05Whale", "06Bird", "07Owl", "08Sabertooth",
@@ -39,11 +39,13 @@ pre_parser.add_argument("-p", "--prefix", metavar="pf", type=str, help="prefix f
 pre_parser.add_argument("--seed", type=int, help="seed for random behavior", default=0)
 pre_parser.add_argument("--gauss_iters", type=int, help="number of training iterations for 3DGS", default=30000)
 pre_parser.add_argument("--wandb", type=int, help="whether we track with wandb", default=1)
-pre_parser.add_argument("--train", type=int, help="whether we train or look for a saved model", default=1)                   
+# pre_parser.add_argument("--train", type=int, help="whether we train or look for a saved model", default=1)               
 pre_parser.add_argument("-v", "--verbose", type=int, help="verbosity", default=0)                        
 pre_parser.add_argument("--data_path", type=str, help="path pointing towards the usable data set", default="MAD-Sim_3dgs/")                        
 pre_parser.add_argument("--result", type=str, help="path of output result", default="ad_result")
 pre_parser.add_argument("--model_path_splatpose", type=str, help="path of 3dgs output model", default="output")
+pre_parser.add_argument("--pcd_name", type=str, help="name of the processed 3dgs poind cloud", default="point_cloud.ply")
+pre_parser.add_argument("--json_name", type=str, help="name of the camera pose json file", default="transforms.json")
 
 args = pre_parser.parse_args()
 
@@ -62,10 +64,13 @@ model_dir = os.path.join(args.model_path_splatpose, args.classname)
 data_dir = args.data_path
 
 test_images, reference_images, all_labels, gt_masks, times, filenames = main_pose_estimation(cur_class=args.classname,
-                                                                                result_dir=result_dir,
-                                                                                model_dir_location=model_dir,
-                                                                                k=args.k, verbose=args.verbose,
-                                                                                data_dir=data_dir)
+                                                                                    result_dir=result_dir,
+                                                                                    model_dir_location=model_dir,
+                                                                                    k=args.k, 
+                                                                                    verbose=args.verbose,
+                                                                                    data_dir=data_dir,
+                                                                                    pcd_name=args.pcd_name,
+                                                                                    json_name=args.json_name,)
 
 if args.wandb:
     my_data = [[i, times[i]] for i in range(len(times))]

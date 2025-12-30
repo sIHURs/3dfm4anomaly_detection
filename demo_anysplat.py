@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
 import torch
+import numpy as np
 import os
 import sys
 import time
@@ -11,6 +12,182 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from factory.anysplat.misc.image_io import save_interpolated_video
 from factory.anysplat.model.model.anysplat import AnySplat
 from factory.anysplat.utils.image import process_image
+from factory.anysplat.model.ply_export import export_ply
+
+
+
+
+# help functions for export @yfian
+def _to_np(x):
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().numpy()
+    return np.asarray(x)
+
+def try_export_ply_builtin(gaussians, ply_path: str) -> bool:
+    """Try common export methods on the gaussians object."""
+    for name in ["save_ply", "to_ply", "export_ply", "write_ply", "save_as_ply"]:
+        fn = getattr(gaussians, name, None)
+        if callable(fn):
+            fn(ply_path)
+            return True
+    return False
+
+def write_gaussian_ply_binary(
+    path: str,
+    xyz: np.ndarray,          # (N,3) float32
+    rgb_u8: np.ndarray,       # (N,3) uint8
+    opacity: np.ndarray,      # (N,) float32 in [0,1]
+    scale: np.ndarray,        # (N,3) float32 (linear scale)
+    quat_wxyz: np.ndarray,    # (N,4) float32
+):
+    xyz = xyz.astype(np.float32)
+    scale = scale.astype(np.float32)
+    quat_wxyz = quat_wxyz.astype(np.float32)
+    opacity = opacity.reshape(-1).astype(np.float32)
+    rgb_u8 = rgb_u8.astype(np.uint8)
+
+    N = xyz.shape[0]
+    assert xyz.shape == (N, 3)
+    assert scale.shape == (N, 3)
+    assert quat_wxyz.shape == (N, 4)
+    assert opacity.shape == (N,)
+    assert rgb_u8.shape == (N, 3)
+
+    header = "\n".join([
+        "ply",
+        "format binary_little_endian 1.0",
+        f"element vertex {N}",
+        "property float x",
+        "property float y",
+        "property float z",
+        "property uchar red",
+        "property uchar green",
+        "property uchar blue",
+        "property float opacity",
+        "property float scale_0",
+        "property float scale_1",
+        "property float scale_2",
+        "property float rot_0",
+        "property float rot_1",
+        "property float rot_2",
+        "property float rot_3",
+        "end_header\n"
+    ]).encode("ascii")
+
+    dtype = np.dtype([
+        ("x", "f4"), ("y", "f4"), ("z", "f4"),
+        ("red", "u1"), ("green", "u1"), ("blue", "u1"),
+        ("opacity", "f4"),
+        ("scale_0", "f4"), ("scale_1", "f4"), ("scale_2", "f4"),
+        ("rot_0", "f4"), ("rot_1", "f4"), ("rot_2", "f4"), ("rot_3", "f4"),
+    ])
+    data = np.empty(N, dtype=dtype)
+    data["x"], data["y"], data["z"] = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+    data["red"], data["green"], data["blue"] = rgb_u8[:, 0], rgb_u8[:, 1], rgb_u8[:, 2]
+    data["opacity"] = opacity
+    data["scale_0"], data["scale_1"], data["scale_2"] = scale[:, 0], scale[:, 1], scale[:, 2]
+    data["rot_0"], data["rot_1"], data["rot_2"], data["rot_3"] = (
+        quat_wxyz[:, 0], quat_wxyz[:, 1], quat_wxyz[:, 2], quat_wxyz[:, 3]
+    )
+
+    with open(path, "wb") as f:
+        f.write(header)
+        f.write(data.tobytes(order="C"))
+
+def export_gaussians_to_ply(gaussians, ply_path: str):
+    """
+    Export AnySplat gaussians to a Supersplat-friendly Gaussian PLY.
+
+    This tries:
+      1) built-in export if exists
+      2) manual export using common field names
+
+    If manual export fails, it prints the available keys/attrs to help mapping.
+    """
+    os.makedirs(os.path.dirname(ply_path), exist_ok=True)
+
+    # 1) Built-in export (best)
+    if try_export_ply_builtin(gaussians, ply_path):
+        print(f"[INFO] Exported gaussians via built-in method: {ply_path}")
+        return
+
+    # 2) Manual export: try common structures
+    # gaussians may be dict-like or object with attributes
+    def get_field(names):
+        if isinstance(gaussians, dict):
+            for n in names:
+                if n in gaussians:
+                    return gaussians[n]
+        else:
+            for n in names:
+                if hasattr(gaussians, n):
+                    return getattr(gaussians, n)
+        return None
+
+    # Common candidates across 3DGS implementations
+    xyz = get_field(["xyz", "means", "means3D", "mu", "position", "positions"])
+    scale = get_field(["scales", "scale", "log_scales", "log_scale"])
+    quat = get_field(["quats", "quat", "rotations", "rotation", "rots", "rot"])
+    opacity = get_field(["opacities", "opacity", "alpha", "alphas", "opacity_logit", "opacity_logits"])
+    rgb = get_field(["rgb", "colors", "color", "sh_dc", "features_dc", "f_dc"])  # may be SH DC
+
+    # If something is missing, dump info
+    if xyz is None or scale is None or quat is None or opacity is None or rgb is None:
+        print("[ERROR] Cannot find required fields for manual PLY export.")
+        print("        Need xyz/scale/quat/opacity/rgb (or SH DC).")
+        if isinstance(gaussians, dict):
+            print("        gaussians keys:", list(gaussians.keys()))
+        else:
+            attrs = [a for a in dir(gaussians) if not a.startswith("_")]
+            cand = [a for a in attrs if any(k in a.lower() for k in ["xyz","mean","scale","rot","quat","opac","alpha","rgb","color","sh","feat","dc"])]
+            print("        gaussians candidate attrs:", cand[:80])
+        raise RuntimeError("Manual PLY export mapping failed. Inspect gaussians and adjust field names.")
+
+    xyz = _to_np(xyz).reshape(-1, 3).astype(np.float32)
+
+    # scale: if it's log-scale, exp it (very common)
+    scale_np = _to_np(scale)
+    scale_np = scale_np.reshape(-1, 3).astype(np.float32)
+    # heuristic: if values look like log-scale (often negative), exp them
+    if np.median(scale_np) < 0.0:
+        scale_np = np.exp(scale_np).astype(np.float32)
+
+    quat_np = _to_np(quat).reshape(-1, 4).astype(np.float32)
+
+    # opacity: if it's logits, sigmoid it
+    opacity_np = _to_np(opacity).reshape(-1).astype(np.float32)
+    # heuristic: logits often not in [0,1]
+    if opacity_np.min() < -0.01 or opacity_np.max() > 1.01:
+        opacity_np = 1.0 / (1.0 + np.exp(-opacity_np))
+
+    # rgb: handle either [0,1] float rgb OR SH DC-like
+    rgb_np = _to_np(rgb)
+    if rgb_np.ndim == 2 and rgb_np.shape[1] >= 3:
+        rgb3 = rgb_np[:, :3]
+    elif rgb_np.ndim == 3:
+        # sometimes (N,1,3)
+        rgb3 = rgb_np.reshape(-1, rgb_np.shape[-1])[:, :3]
+    else:
+        raise RuntimeError(f"Unexpected rgb field shape: {rgb_np.shape}")
+
+    rgb3 = rgb3.astype(np.float32)
+    # clamp/scale to uint8
+    if rgb3.max() <= 1.5:
+        rgb_u8 = np.clip(rgb3 * 255.0, 0, 255).astype(np.uint8)
+    else:
+        rgb_u8 = np.clip(rgb3, 0, 255).astype(np.uint8)
+
+    write_gaussian_ply_binary(
+        ply_path,
+        xyz=xyz,
+        rgb_u8=rgb_u8,
+        opacity=opacity_np,
+        scale=scale_np,
+        quat_wxyz=quat_np,
+    )
+    print(f"[INFO] Exported gaussians via manual mapping: {ply_path}")
+
+################################################################################################################
 
 
 # -----------------------------
@@ -302,7 +479,9 @@ def main() -> None:
     # Load and preprocess images
     images = [process_image(image_name) for image_name in image_names]
     images = torch.stack(images, dim=0).unsqueeze(0).to(device)  # [1, K, 3, 448, 448]
-    b, v, _, h, w = images.shape
+    b, v, c, h, w = images.shape
+
+    assert c == 3, "Images must have 3 channels" # from demo_gradio.py
 
     if args.print_vram:
         snapshot_all(
@@ -337,6 +516,17 @@ def main() -> None:
         gaussians,
         save_path,
         model.decoder,
+    )
+
+    plyfile = os.path.join(save_path, "gaussians.ply")
+    export_ply(
+        gaussians.means[0],
+        gaussians.scales[0],
+        gaussians.rotations[0],
+        gaussians.harmonics[0],
+        gaussians.opacities[0],
+        Path(plyfile),
+        save_sh_dc_only=True,
     )
 
     if args.print_vram:
