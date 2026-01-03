@@ -59,9 +59,9 @@ pip install  . --no-build-isolation
 
 cd ~/tmp/3dfm4anomaly_detection/submodules/diff-gaussian-rasterizatio
 vim cuda_rasterizer/rasterizer_impl.h
-# add the follow headers into the file
-# #include <cstdint>
-# #include <cstddef>
+# add the follow headers into the file (.h):
+#include <cstdint>
+#include <cstddef>
 
 cd submodules/simple-knn
 git checkout 86710c2
@@ -70,3 +70,13 @@ pip install . --no-build-isolation
 dc submodules/fused-ssim
 git checkout 1272e21
 pip install . --no-build-isolation 
+```
+
+### Framework Factory
+
+3d foundation models:
+
+
+Gaussian Splatting Models:
+
+have some envs cuz diff_gaussian_rasterizatio version 

@@ -210,7 +210,7 @@ def load_sim3_from_json(json_path):
 
 def run_pose_analysis(dir, cls, align=True, save_aligned_pred=None, vis=False, save_sim3=False, use_sim3=False):
 
-    pred = f"{dir}/{cls}/transforms_converted_openGL.json"
+    pred = f"{dir}/{cls}/transforms_vggt_predicted_180views.json"
     gt   = f"{dir}/{cls}/transforms_train.json"
 
     T_pred = load_tf(pred)
