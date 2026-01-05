@@ -65,13 +65,18 @@ def main_pose_estimation(cur_class, result_dir, model_dir_location, k=150, verbo
         save_to = os.path.join(result_dir, "3dgs_imgs")
         os.makedirs(save_to, exist_ok=True)
 
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
+    pose_start = torch.cuda.Event(enable_timing=True)
+    pose_end = torch.cuda.Event(enable_timing=True)
+
+    loftr_start = torch.cuda.Event(enable_timing=True)
+    loftr_end   = torch.cuda.Event(enable_timing=True)
+
     normal_images = list()
     reference_images = list()
     all_labels = list()
     gt_masks = list()
-    times = list()
+    pose_times = list()
+    loftr_times = list()
     filenames = list()
 
     matcher = build_loftr(LOFTR_CKPT_PATH)
@@ -102,11 +107,13 @@ def main_pose_estimation(cur_class, result_dir, model_dir_location, k=150, verbo
         obs_img = torch.movedim(obs_img, 0, 2).contiguous()                                       # H,W,C
         obs_img = (obs_img * 255).to("cuda", dtype=torch.float16)
 
+        loftr_start.record()
+
         c2w_init_idx = pose_retrieval_loftr(matcher, train_imgs, obs_img, "cuda")
         c2w_init_np = train_poses[c2w_init_idx]
-        c2w_init = torch.from_numpy(c2w_init_np).float().to("cuda")
 
-        start.record()
+        pose_start.record()
+        c2w_init = torch.from_numpy(c2w_init_np).float().to("cuda")
 
         c2w_init = c2w_init.clone()
         c2w_init[:3, 1:3] *= -1
@@ -205,11 +212,13 @@ def main_pose_estimation(cur_class, result_dir, model_dir_location, k=150, verbo
                 normal_images.append(set_entry[0].cpu().detach())
                 reference_images.append(rendering.cpu().detach())
 
-        end.record()
+        pose_end.record()
+        loftr_end.record()
         torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
+        pose_times.append(pose_start.elapsed_time(pose_end))
+        loftr_times.append(loftr_start.elapsed_time(loftr_end))
     
     assert len(normal_images) == len(reference_images) == len(testset), f"Wrongly sized sets!" \
                                                                          f"{len(normal_images)}. {len(reference_images)}. {len(testset)}"
     assert len(normal_images) == len(gt_masks), f"Wrongly sized sets! {len(normal_images)}. {len(gt_masks)}"
-    return normal_images, reference_images, all_labels, gt_masks, times, filenames
+    return normal_images, reference_images, all_labels, gt_masks, pose_times, loftr_times, filenames
