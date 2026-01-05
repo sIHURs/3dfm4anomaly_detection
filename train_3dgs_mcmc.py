@@ -12,6 +12,7 @@
 import os
 import json
 import torch
+import numpy as np
 from random import randint
 from factory.gaussian_splatting_mcmc.utils.loss_utils import l1_loss, ssim
 from factory.gaussian_splatting_mcmc.gaussian_renderer import render, network_gui
@@ -24,7 +25,9 @@ from torchvision.utils import save_image
 from factory.gaussian_splatting_mcmc.utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from factory.gaussian_splatting_mcmc.arguments import ModelParams, PipelineParams, OptimizationParams
-from factory.gaussian_splatting_mcmc.scene.gaussian_model import build_scaling_rotation
+from factory.gaussian_splatting_mcmc.scene.gaussian_model import build_scaling_rotation, BasicPointCloud
+from plyfile import PlyData, PlyElement
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -39,6 +42,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
+
+    # tmp: for testing, init with random pcd by force
+    if args.random_init_pcd:
+        radius = scene.cameras_extent * args.init_radius_scale
+        pcd = make_random_pointcloud_3dgs(args.num_init_points, radius, 0)
+        # scene.scene_info.point_cloud = pcd
+        gaussians.create_from_pcd(pcd, scene.cameras_extent)
+        save_basic_pointcloud_as_ply(pcd, f"{args.source_path}/random_init.ply")
+
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -219,6 +231,66 @@ def load_config(config_file):
         config = json.load(file)
     return config
 
+
+def make_random_pointcloud_3dgs(
+    num_points: int,
+    radius: float,
+    seed: int | None = None,
+) -> BasicPointCloud:
+    """
+    Random point cloud initialization equivalent to original 3DGS.
+
+    - Uniform sampling in cube [-radius, +radius]^3
+    - Constant/random RGB
+    - Zero normals
+    """
+    if seed is not None:
+        np.random.seed(seed)
+
+    # === 1. positions: uniform in cube ===
+    pts = np.random.uniform(
+        low=-radius,
+        high=radius,
+        size=(num_points, 3)
+    ).astype(np.float32)
+
+    # === 2. colors: constant or weak random ===
+    cols = np.full((num_points, 3), 0.5, dtype=np.float32)
+    # cols = np.random.rand(num_points, 3).astype(np.float32)
+
+    # === 3. normals: unused, set to zero ===
+    nrm = np.zeros_like(pts, dtype=np.float32)
+
+    return BasicPointCloud(
+        points=pts,
+        colors=cols,
+        normals=nrm,
+    )
+
+def save_basic_pointcloud_as_ply(
+    pcd: BasicPointCloud,
+    ply_path: str,
+):
+    pts = pcd.points
+    cols = (pcd.colors * 255).clip(0, 255).astype(np.uint8)
+    nrm = pcd.normals
+
+    verts = np.empty(len(pts), dtype=[
+        ("x", "f4"), ("y", "f4"), ("z", "f4"),
+        ("nx", "f4"), ("ny", "f4"), ("nz", "f4"),
+        ("red", "u1"), ("green", "u1"), ("blue", "u1"),
+    ])
+
+    verts["x"], verts["y"], verts["z"] = pts[:, 0], pts[:, 1], pts[:, 2]
+    verts["nx"], verts["ny"], verts["nz"] = nrm[:, 0], nrm[:, 1], nrm[:, 2]
+    verts["red"], verts["green"], verts["blue"] = cols[:, 0], cols[:, 1], cols[:, 2]
+
+    ply = PlyData(
+        [PlyElement.describe(verts, "vertex")],
+        text=False
+    )
+    ply.write(ply_path)
+
 if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
@@ -233,6 +305,12 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+
+    parser.add_argument("--random_init_pcd", action="store_true")
+    parser.add_argument("--num_init_points", type=int, default=100000)
+    parser.add_argument("--init_radius_scale", type=float, default=1.0)
+
+
     args = parser.parse_args(sys.argv[1:])
     
     if args.config is not None:
