@@ -63,7 +63,7 @@ result_dir = os.path.join(args.result, f"results_{args.prefix}_{args.seed}", arg
 model_dir = os.path.join(args.model_path_splatpose, args.classname)
 data_dir = args.data_path
 
-test_images, reference_images, all_labels, gt_masks, times, filenames = main_pose_estimation(cur_class=args.classname,
+test_images, reference_images, all_labels, gt_masks, times, total_times, filenames = main_pose_estimation(cur_class=args.classname,
                                                                                     result_dir=result_dir,
                                                                                     model_dir_location=model_dir,
                                                                                     k=args.k, 
@@ -73,10 +73,19 @@ test_images, reference_images, all_labels, gt_masks, times, filenames = main_pos
                                                                                     json_name=args.json_name,)
 
 if args.wandb:
-    my_data = [[i, times[i]] for i in range(len(times))]
-    columns = ["index", "time_millis"]
-    cur_table = wandb.Table(data=my_data, columns=columns)
-    wandb.log({"time_millis": cur_table})
+    pose_time = [[i, times[i]] for i in range(len(times))]
+    pose_table = wandb.Table(
+        data=pose_time,
+        columns=["index", "pose_time_ms"]
+    )
+    wandb.log({"pose_time_ms": pose_table})
+
+    total_time = [[i, total_times[i]] for i in range(len(total_times))]
+    total_table = wandb.Table(
+        data=total_time,
+        columns=["index", "total_time_ms"]
+    )
+    wandb.log({"total_time_ms": total_table})
 
 
 with open(PAD_CONFIG_PATH) as f:
@@ -168,9 +177,13 @@ gt_list_isano = np.asarray(all_labels) != 0
 img_roc_auc = roc_auc_score(gt_list_isano, img_scores)
 print('image ROCAUC: %.3f' % (img_roc_auc))
 
+print(f"avg_pose_time_ms  : {np.mean(times):.2f}")
+print(f"avg_total_time_ms : {np.mean(total_times):.2f}")
+
 if args.wandb:
     wandb.log({
-        "avg_time" : np.mean(times),
+        "avg_pose_time_ms": float(np.mean(times)),
+        "avg_total_time_ms": float(np.mean(total_times)),
         "pixel_roc" : per_pixel_rocauc,
         "image_roc" : img_roc_auc,
         "aupro" : au_pro
