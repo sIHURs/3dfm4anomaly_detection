@@ -177,14 +177,15 @@ def vec2ss_matrix(vector):  # vector to skewsym. matrix
     return ss_matrix
 
 class camera_transf(nn.Module):
-    def __init__(self):
+    def __init__(self, init_std=1e-6, device="cuda"):
         super(camera_transf, self).__init__()
+        self.init_std = init_std
         self.w = nn.Parameter(torch.normal(0, 1e-6, size=(3,)), requires_grad=True)
         self.v = nn.Parameter(torch.normal(0, 1e-6, size=(3,)), requires_grad=True)
         self.theta = nn.Parameter(torch.normal(0, 1e-6, size=()), requires_grad=True)
         self.eye = torch.eye(3, requires_grad=False).to("cuda")
         # self.ones = torch.ones(3, requires_grad=False).to("cuda")
-
+        
     def forward(self):
         w_skewsym = vec2ss_matrix(self.w)
         # Proposition 3.11 in Modern Robotics (p. 84)
@@ -195,6 +196,19 @@ class camera_transf(nn.Module):
         r_quat = torch.nn.functional.normalize(matrix_to_quaternion(R[None,...]), dim=1) 
         return R, T, r_quat
     
+    @torch.no_grad()
+    def reset_(self, std=None, zeros=False):
+        """Reset parameters for a new sample (no new module allocation)."""
+        if std is None:
+            std = self.init_std
+        if zeros:
+            self.w.zero_()
+            self.v.zero_()
+            self.theta.zero_()
+        else:
+            self.w.normal_(0.0, std)
+            self.v.normal_(0.0, std)
+            self.theta.normal_(0.0, std)
 
 
 backbone_info = {
@@ -383,38 +397,56 @@ def update_config(config):
 
     return config
 
+def rgb_to_gray_torch(x):
+    # x: (H,W,3) uint8/float on CUDA
+    if x.dtype != torch.float32:
+        x = x.float()
+    # coefficients for RGB->Gray (approx)
+    r, g, b = x[..., 0], x[..., 1], x[..., 2]
+    gray = 0.2989*r + 0.5870*g + 0.1140*b
+    return gray
 
-def pose_retrieval_loftr(imgs,obs_img,poses):
-    # The default config uses dual-softmax.
-    # The outdoor and indoor models share the same config.
-    # You can change the default values like thr and coarse_match_type.
+def build_loftr(ckpt_path, device="cuda"):
     _default_cfg = deepcopy(default_cfg)
-    _default_cfg['coarse']['temp_bug_fix'] = True  # set to False when using the old ckpt
+    _default_cfg['coarse']['temp_bug_fix'] = True
     matcher = LoFTR(config=_default_cfg)
-    matcher.load_state_dict(torch.load(str(CKPT_PATH))["state_dict"])
-    matcher = matcher.eval().cuda()
-    if obs_img.shape[-1] == 3:
-        query_img = cv2.cvtColor(obs_img, cv2.COLOR_RGB2GRAY)
-    img0 = torch.from_numpy(query_img)[None][None].cuda() / 255.
-    max_match=-1
-    max_index=-1
-    for i in range(len(imgs)):
-        if imgs[i].shape[-1] == 3:
-            gallery_img = cv2.cvtColor(imgs[i], cv2.COLOR_RGB2GRAY)
-        img1 = torch.from_numpy(gallery_img)[None][None].cuda() / 255.
-        batch = {'image0': img0, 'image1': img1}
+    state = torch.load(str(ckpt_path), map_location="cpu")["state_dict"]
+    matcher.load_state_dict(state)
+    matcher = matcher.eval().to(device)
+    return matcher
 
-        # Inference with LoFTR and get prediction
-        with torch.no_grad():
-            matcher(batch)
-            mkpts0 = batch['mkpts0_f'].cpu().numpy()
-            mkpts1 = batch['mkpts1_f'].cpu().numpy()
-            mconf = batch['mconf'].cpu().numpy()
-        match_num=len(mconf)
-        if match_num>max_match:
-            max_match=match_num
-            max_index=i
-    return np.copy(poses[max_index])
+@torch.no_grad()
+def pose_retrieval_loftr(matcher, imgs, obs_img, device="cuda"):
+    """
+    imgs: torch.Tensor (N,H,W,C) on CUDA, float16/float32, range 0..255
+    obs_img: torch.Tensor (H,W,C) on CUDA, float16/float32, range 0..255
+    returns: int (max_index)
+    """
+    q = obs_img
+    if q.ndim == 3 and q.shape[-1] == 3:
+        q = rgb_to_gray_torch(q)          # (H,W)
+    q = (q / 255.0)[None, None, ...].contiguous()  # (1,1,H,W) in 0..1
+
+    max_match = -1
+    max_index = -1
+
+    N = imgs.shape[0]
+    for i in range(N):
+        g = imgs[i]  # (H,W,C) CUDA
+        if g.ndim == 3 and g.shape[-1] == 3:
+            g = rgb_to_gray_torch(g)
+        g = (g / 255.0)[None, None, ...].contiguous()  # (1,1,H,W)
+
+        batch = {"image0": q, "image1": g}
+        matcher(batch)
+
+        # mconf is torch tensor on GPU; numel() is scalar sync but tiny
+        match_num = int(batch["mconf"].numel())
+        if match_num > max_match:
+            max_match = match_num
+            max_index = i
+
+    return max_index
         
 
 def t2np(tensor):
