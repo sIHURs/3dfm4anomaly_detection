@@ -397,14 +397,22 @@ def update_config(config):
 
     return config
 
+# def rgb_to_gray_torch(x):
+#     # x: (H,W,3) uint8/float on CUDA
+#     if x.dtype != torch.float32:
+#         x = x.float()
+#     # coefficients for RGB->Gray (approx)
+#     r, g, b = x[..., 0], x[..., 1], x[..., 2]
+#     gray = 0.2989*r + 0.5870*g + 0.1140*b
+#     return gray
+
 def rgb_to_gray_torch(x):
-    # x: (H,W,3) uint8/float on CUDA
-    if x.dtype != torch.float32:
-        x = x.float()
-    # coefficients for RGB->Gray (approx)
-    r, g, b = x[..., 0], x[..., 1], x[..., 2]
-    gray = 0.2989*r + 0.5870*g + 0.1140*b
-    return gray
+    # x: (...,H,W,3) 或 (H,W,3)
+    # 返回 (...,H,W)
+    r = x[..., 0].to(torch.float32)
+    g = x[..., 1].to(torch.float32)
+    b = x[..., 2].to(torch.float32)
+    return 0.2989 * r + 0.5870 * g + 0.1140 * b
 
 def build_loftr(ckpt_path, device="cuda"):
     _default_cfg = deepcopy(default_cfg)
@@ -416,7 +424,7 @@ def build_loftr(ckpt_path, device="cuda"):
     return matcher
 
 @torch.no_grad()
-def pose_retrieval_loftr(matcher, imgs, obs_img, device="cuda"):
+def pose_retrieval_loftr(matcher, imgs, obs_img):
     """
     imgs: torch.Tensor (N,H,W,C) on CUDA, float16/float32, range 0..255
     obs_img: torch.Tensor (H,W,C) on CUDA, float16/float32, range 0..255
@@ -447,7 +455,87 @@ def pose_retrieval_loftr(matcher, imgs, obs_img, device="cuda"):
             max_index = i
 
     return max_index
-        
+
+@torch.no_grad()
+def pose_retrieval_loftr_batched(
+    matcher,
+    imgs,          # (N,H,W,C) CUDA, 0..255
+    obs_img,       # (H,W,C) CUDA, 0..255
+    batch_size=32,
+    conf_thr=0.0,  # 可以设 0.2/0.5 做更稳的计数
+):
+    """
+    Returns:
+      max_index: int
+    """
+    # --- query gray ---
+    q = obs_img
+    if q.ndim == 3 and q.shape[-1] == 3:
+        q = rgb_to_gray_torch(q)  # (H,W)
+    q = (q / 255.0).to(dtype=torch.float32)          # 用 float32 稳一点
+    q = q[None, None, ...].contiguous()              # (1,1,H,W)
+
+    # --- gallery gray (一次性转换，避免 N 次灰度开销) ---
+    g = imgs
+    if g.ndim == 4 and g.shape[-1] == 3:
+        g = rgb_to_gray_torch(g)   # 需要你实现支持 (N,H,W,3)->(N,H,W)
+    g = (g / 255.0).to(dtype=torch.float32)
+    g = g[:, None, ...].contiguous()                 # (N,1,H,W)
+
+    N = g.shape[0]
+    best_score = None
+    best_index = None
+
+    # 用 GPU tensor 存所有分数，最后 argmax 只同步一次
+    all_scores = torch.empty((N,), device=g.device, dtype=torch.int32)
+
+    for start in range(0, N, batch_size):
+        end = min(start + batch_size, N)
+        B = end - start
+
+        g_batch = g[start:end]                       # (B,1,H,W)
+        q_batch = q.expand(B, -1, -1, -1)            # (B,1,H,W) 视图，不复制
+
+        batch = {"image0": q_batch, "image1": g_batch}
+        matcher(batch)
+
+        # --------- 计算每个样本的匹配数量（GPU 上）---------
+        # 不同 LoFTR 版本可能提供：
+        # - 'b_ids' (每个匹配点属于哪个 batch)
+        # - 'mkpts0_f' / 'mkpts1_f' + 'mconf' + 'b_ids'
+        #
+        # 这里优先用 b_ids 来做 per-sample 计数（最稳）。
+        if "b_ids" in batch:
+            b_ids = batch["b_ids"]                   # (M,) long, 0..B-1
+            if conf_thr > 0 and "mconf" in batch:
+                keep = batch["mconf"] >= conf_thr    # (M,)
+                b_ids = b_ids[keep]
+            # counts: (B,)
+            counts = torch.bincount(b_ids, minlength=B).to(torch.int32)
+
+        else:
+            # 退化策略：如果没有 b_ids，就没法严格 per-sample 统计。
+            # 这时建议：
+            # 1) 直接把 batch_size 设为 1（退化回单张）
+            # 或 2) 修改你的 LoFTR 实现，让它输出 b_ids
+            #
+            # 为了不 silent-wrong，这里直接退化成 B=1 的逐张计算。
+            # 你也可以 raise Exception 强制你去改 LoFTR 输出。
+            for j in range(B):
+                batch1 = {"image0": q, "image1": g[start + j:start + j + 1]}
+                matcher(batch1)
+                if conf_thr > 0 and "mconf" in batch1:
+                    counts1 = (batch1["mconf"] >= conf_thr).sum().to(torch.int32)
+                else:
+                    counts1 = torch.tensor(batch1["mconf"].numel(), device=g.device, dtype=torch.int32)
+                all_scores[start + j] = counts1
+            continue
+
+        all_scores[start:end] = counts
+
+    # 只同步一次
+    max_index = int(torch.argmax(all_scores).item())
+    return max_index
 
 def t2np(tensor):
     '''pytorch tensor -> numpy array'''

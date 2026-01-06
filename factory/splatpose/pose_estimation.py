@@ -12,18 +12,23 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-from utils_pose_est import DefectDataset, pose_retrieval_loftr, camera_transf, build_loftr
+from utils_pose_est import DefectDataset, pose_retrieval_loftr, camera_transf, build_loftr, pose_retrieval_loftr_batched
 
 from torchvision.transforms.functional import to_pil_image
 
 from pathlib import Path
 LOFTR_CKPT_PATH = Path(__file__).resolve().parents[1] / "splatpose" /"PAD_utils" / "model" / "indoor_ds_new.ckpt"
 
-classnames = ["01Gorilla", "02Unicorn", "03Mallard", "04Turtle", "05Whale", "06Bird", "07Owl", "08Sabertooth",
-              "09Swan", "10Sheep", "11Pig", "12Zalika", "13Pheonix", "14Elephant", "15Parrot", "16Cat", "17Scorpion",
-              "18Obesobeso", "19Bear", "20Puppy"]
-
-def main_pose_estimation(cur_class, result_dir, model_dir_location, k=150, verbose=False, data_dir=None, pcd_name="point_cloud.ply", json_name="transforms.json"):
+def main_pose_estimation(cur_class, 
+                         result_dir, 
+                         model_dir_location, 
+                         k=150, 
+                         verbose=False, 
+                         data_dir=None, 
+                         pcd_name="point_cloud.ply", 
+                         json_name="transforms.json",
+                         loftr_batch=32,
+                         loftr_resolution=(128,128)):
     
     result_dir = result_dir
     output_dir = os.path.join(model_dir_location, "output")
@@ -35,7 +40,7 @@ def main_pose_estimation(cur_class, result_dir, model_dir_location, k=150, verbo
     # train_poses = np.concatenate([np.array(a["transform_matrix"])[None,...] for a in trainset.camera_transforms["frames"]])
     # train_imgs = torch.movedim(torch.nn.functional.interpolate(train_imgs, (400,400)), 1, 3).numpy()
     train_imgs = torch.cat([a[0][None, ...] for a in trainset], dim=0)          # N, C, H, W
-    train_imgs = torch.nn.functional.interpolate(train_imgs, (400, 400))        # N,C,400,400
+    train_imgs = torch.nn.functional.interpolate(train_imgs, loftr_resolution)        # N,C,400,400
     train_imgs = torch.movedim(train_imgs, 1, 3).contiguous()                   # N,400,400,C
 
     train_imgs = (train_imgs * 255).to(device="cuda", dtype=torch.float16)
@@ -103,13 +108,13 @@ def main_pose_estimation(cur_class, result_dir, model_dir_location, k=150, verbo
         
         gt_masks.append(set_entry[2].cpu().numpy())
         # obs_img = torch.movedim(torch.nn.functional.interpolate(set_entry[0][None,...], (400, 400)).squeeze(), 0, 2)
-        obs_img = torch.nn.functional.interpolate(set_entry[0][None, ...], (400,400)).squeeze(0)  # C,H,W
+        obs_img = torch.nn.functional.interpolate(set_entry[0][None, ...], loftr_resolution).squeeze(0)  # C,H,W
         obs_img = torch.movedim(obs_img, 0, 2).contiguous()                                       # H,W,C
         obs_img = (obs_img * 255).to("cuda", dtype=torch.float16)
 
         loftr_start.record()
 
-        c2w_init_idx = pose_retrieval_loftr(matcher, train_imgs, obs_img, "cuda")
+        c2w_init_idx = pose_retrieval_loftr_batched(matcher, train_imgs, obs_img, batch_size=loftr_batch)
         c2w_init_np = train_poses[c2w_init_idx]
 
         pose_start.record()
