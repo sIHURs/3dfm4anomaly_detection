@@ -179,9 +179,11 @@ print('image ROCAUC: %.3f' % (img_roc_auc))
 
 print(f"avg_pose_time_ms  : {np.mean(times):.2f}")
 print(f"avg_total_time_ms : {np.mean(total_times):.2f}")
+print(f"total_time_ms : {np.sum(total_times):.2f}")
 
 if args.wandb:
     wandb.log({
+        "sum_total_time_ms": float(np.sum(total_times)),
         "avg_pose_time_ms": float(np.mean(times)),
         "avg_total_time_ms": float(np.mean(total_times)),
         "pixel_roc" : per_pixel_rocauc,
