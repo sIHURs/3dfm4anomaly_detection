@@ -34,11 +34,11 @@ pre_parser = ArgumentParser(description="Parameters of the LEGO training run")
 pre_parser.add_argument("-k", metavar="K", type=int, help="number of pose estimation steps", default=175)
 pre_parser.add_argument("-c", "--classname", metavar="c", type=str, help="current class to run experiments on",
                         default="01Gorilla")
-pre_parser.add_argument("-w", "--use_wandb", type=int, help="the wandb to use", default=1)
+pre_parser.add_argument("-w", "--use_wandb", type=int, help="the wandb to use", default=0)
 pre_parser.add_argument("-p", "--prefix", metavar="pf", type=str, help="prefix for the wandb run name", default="to_delete")
 pre_parser.add_argument("--seed", type=int, help="seed for random behavior", default=0)
-pre_parser.add_argument("--loftr_batch", type=int, help="batch size for loftr pose retrieval, 32 is the optimal", default=32)
-pre_parser.add_argument("--loftr_resolution", type=tuple, help="images resolution for loftr pose retrieval, 32 is the optimal", default=(128,128))
+pre_parser.add_argument("--loftr_batch", type=int, help="batch size for loftr pose retrieval", default=32)
+pre_parser.add_argument("--loftr_resolution", type=tuple, help="images resolution for loftr pose retrieval", default=(128,128))
 pre_parser.add_argument("--gauss_iters", type=int, help="number of training iterations for 3DGS", default=30000)
 pre_parser.add_argument("--wandb", type=int, help="whether we track with wandb", default=1)
 # pre_parser.add_argument("--train", type=int, help="whether we train or look for a saved model", default=1)               
@@ -75,6 +75,7 @@ test_images, reference_images, all_labels, gt_masks, times, total_times, filenam
                                                                                     loftr_batch=args.loftr_batch,
                                                                                     loftr_resolution=args.loftr_resolution)
 
+# todo: some thing wrong with wandb output
 if args.use_wandb:
     pose_time = [[i, float(times[i])] for i in range(len(times))]
     pose_table = wandb.Table(
