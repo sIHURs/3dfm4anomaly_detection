@@ -142,10 +142,12 @@ scores=list()
 pred_list=list()
 recon_imgs=list()
 with torch.no_grad():
+    # todo: use batch, not just single images at once
     for i in range(len(test_images)):
         ref=tf_img(reference_images[i]).unsqueeze(0).cuda()
         rgb=tf_img(test_images[i]).unsqueeze(0).cuda()
         fileId = filenames[i]
+        # todo: torch.cat([ref, rgb], dim=0) then send into model, inference only once
         ref_feature=model(ref)
         rgb_feature=model(rgb)
         score = criterion(ref, rgb).sum(1, keepdim=True)
@@ -156,6 +158,7 @@ with torch.no_grad():
             score += torch.nn.functional.interpolate(mse_loss, size=224, mode='bilinear', align_corners=False)
 
         score = score.squeeze(1).cpu().numpy()
+        # todo: do gaussian_filter on gpu? - kornia?
         for i in range(score.shape[0]):
             score[i] = gaussian_filter(score[i], sigma=4)
 
