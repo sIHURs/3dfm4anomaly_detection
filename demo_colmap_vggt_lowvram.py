@@ -18,12 +18,18 @@ torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = False
 
+# for deterministic behavior
+# torch.backends.cudnn.benchmark = False
+# torch.backends.cudnn.deterministic = True
+# torch.use_deterministic_algorithms(True)
+
+
 import argparse
 from pathlib import Path
 import trimesh
 import pycolmap
 import cv2
-
+import json
 
 from factory.vggt_low_vram.vggt.models.vggt import VGGT
 from factory.vggt_low_vram.vggt.utils.load_fn import load_and_preprocess_images_square
@@ -75,6 +81,31 @@ def parse_args():
 
 
 ''' help functions @yifan '''
+
+def save_vggt_json_w2c(
+    extrinsic,
+    intrinsic,
+    out_path="vggt_extrinsic_intrinsic_w2c.json",
+):
+    extrinsic = np.asarray(extrinsic)
+    intrinsic = np.asarray(intrinsic)
+
+    if intrinsic.ndim == 2:
+        intrinsic = intrinsic[None].repeat(extrinsic.shape[0], axis=0)
+
+    frames = []
+    for i in range(extrinsic.shape[0]):
+        frames.append({
+            "frame_id": int(i),
+            "extrinsic_w2c": extrinsic[i].tolist(),
+            "intrinsic": intrinsic[i].tolist(),
+        })
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    with open(out_path, "w") as f:
+        json.dump(frames, f, indent=2)
+
+    print(f"[OK] wrote {out_path}")
 
 def save_depth_outputs(depth_map, depth_conf, out_dir, prefix="vggt"):
     os.makedirs(out_dir, exist_ok=True)
@@ -238,7 +269,7 @@ def demo_fn(args):
     extrinsic, intrinsic, depth_map, depth_conf = run_VGGT(model, images, device, dtype, vggt_fixed_resolution)
     points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
     # images = images.float()
-
+    
     if args.save_depth:
         os.makedirs(args.output_dir, exist_ok=True)
         depth_map_dir = os.path.join(args.output_dir, "verbose", "depth_map")
