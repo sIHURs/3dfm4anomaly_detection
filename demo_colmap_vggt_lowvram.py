@@ -30,6 +30,10 @@ import trimesh
 import pycolmap
 import cv2
 import json
+import tqdm
+from datetime import datetime
+import math
+now = datetime.now()
 
 from factory.vggt_low_vram.vggt.models.vggt import VGGT
 from factory.vggt_low_vram.vggt.utils.load_fn import load_and_preprocess_images_square
@@ -72,11 +76,21 @@ def parse_args():
         "--adjust_folder", action="store_true", default=True, help="adjust the folder structure to match COLMAP format"
     )
 
+    # todo: for sparse view experiments
+    parser.add_argument("--save_jsonl", action="store_true", help="also append query poses to a merged jsonl file")
+    parser.add_argument("--eval_dir", help="dir that contains burrs/good/missing/stains")
+    parser.add_argument("--test_sparse_view", action="store_true", default=False, help="test with sparse view input")
 
     # todo: add more parameters for testing & experiments @yifan
     parser.add_argument("--save_depth", action="store_true", default=False, help="Save depth map and confidence map")
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    
+    # args conditions
+    if args.test_sparse_view and args.eval_dir is None:
+        parser.error("--eval_dir is required when --test_sparse_view is set")
+
+    return args
 
 
 
@@ -105,7 +119,7 @@ def save_vggt_json_w2c(
     with open(out_path, "w") as f:
         json.dump(frames, f, indent=2)
 
-    print(f"[OK] wrote {out_path}")
+    # print(f"[OK][{now}] wrote {out_path}")
 
 def save_depth_outputs(depth_map, depth_conf, out_dir, prefix="vggt"):
     os.makedirs(out_dir, exist_ok=True)
@@ -119,7 +133,7 @@ def save_depth_outputs(depth_map, depth_conf, out_dir, prefix="vggt"):
     np.save(os.path.join(out_dir, "verbose", f"{prefix}_depth.npy"), depth_map)
     np.save(os.path.join(out_dir, "verbose", f"{prefix}_depth_conf.npy"), depth_conf)
 
-    print(f"[OK] Saved depth_map and depth_conf to {out_dir}")
+    print(f"[OK][{now}] Saved depth_map and depth_conf to {out_dir}")
 
 def save_depth_png(depth, path, vmin=None, vmax=None):
     depth = depth.astype(np.float32)
@@ -168,10 +182,10 @@ def restructure_scene_dir(args):
     # 1️⃣ Rename "images" to "input"
     if os.path.exists(images_dir):
         if os.path.exists(input_dir):
-            print(f"⚠️ Target directory already exists: {input_dir}, skipping rename.")
+            print(f"⚠️[{now}] Target directory already exists: {input_dir}, skipping rename.")
         else:
             shutil.move(images_dir, input_dir)
-            print(f"✅ Renamed 'images' to 'input'")
+            print(f"✅[{now}] Renamed 'images' to 'input'")
 
     # 2️⃣ Move files from "sparse/0" to "distorted/sparse/0"
     if os.path.exists(sparse_dir):
@@ -180,15 +194,134 @@ def restructure_scene_dir(args):
             dst = os.path.join(new_sparse_dir, file_name)
             if os.path.isfile(src):
                 shutil.move(src, dst)
-        print(f"✅ Moved contents of 'sparse/0' to {new_sparse_dir}")
+        print(f"✅[{now}]Moved contents of 'sparse/0' to {new_sparse_dir}")
 
     # 3️⃣ Delete the old "sparse" directory
     old_sparse_root = os.path.join(output_dir, "sparse")
     if os.path.exists(old_sparse_root):
         shutil.rmtree(old_sparse_root)
-        print(f"🗑️ Removed old 'sparse' folder")
+        print(f"🗑️[{now}] Removed old 'sparse' folder")
 
-    print(f"🎯 Folder structure successfully adjusted: {output_dir}")
+    print(f"🎯[{now}] Folder structure successfully adjusted: {output_dir}")
+    
+
+def opencv_to_opengl(T_c2w: np.ndarray) -> np.ndarray:
+    # OpenCV camera coords -> OpenGL/Blender (flip y/z)
+    fix = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float64)
+    return T_c2w @ fix
+
+
+def write_transforms_json_from_vggt(
+    extrinsic_w2c: np.ndarray,   # (N,4,4) or (N,3,4)
+    intrinsic: np.ndarray,       # (N,3,3) or (3,3)
+    image_paths: list,           # length N, full paths (recommended)
+    original_coords: np.ndarray, # (N,4) typically [top_left_x, top_left_y, W, H]
+    img_size: int,               # vggt resolution (518)
+    out_path: str,
+):
+    extrinsic_w2c = np.asarray(extrinsic_w2c)
+    intrinsic = np.asarray(intrinsic)
+
+    # normalize extrinsic to (N,4,4)
+    if extrinsic_w2c.ndim == 3 and extrinsic_w2c.shape[1:] == (3, 4):
+        N = extrinsic_w2c.shape[0]
+        tmp = np.zeros((N, 4, 4), dtype=np.float64)
+        tmp[:, :3, :4] = extrinsic_w2c
+        tmp[:, 3, 3] = 1.0
+        extrinsic_w2c = tmp
+    elif extrinsic_w2c.ndim == 3 and extrinsic_w2c.shape[1:] == (4, 4):
+        pass
+    else:
+        raise ValueError(f"Unsupported extrinsic shape: {extrinsic_w2c.shape}")
+
+    N = extrinsic_w2c.shape[0]
+    if intrinsic.ndim == 2:
+        intrinsic = np.repeat(intrinsic[None, ...], N, axis=0)
+    elif intrinsic.ndim == 3 and intrinsic.shape[0] == N:
+        pass
+    else:
+        raise ValueError(f"Unsupported intrinsic shape: {intrinsic.shape}")
+
+    if len(image_paths) != N:
+        raise ValueError(f"len(image_paths)={len(image_paths)} != N={N}")
+    if original_coords.shape[0] != N:
+        raise ValueError(f"original_coords has {original_coords.shape[0]} entries but N={N}")
+
+    frames = []
+
+    # compute camera_angle_x using first frame after rescale-to-original
+    real_wh0 = original_coords[0, -2:].astype(np.float64)  # (W,H)
+    resize_ratio0 = max(real_wh0) / float(img_size)
+
+    K0 = intrinsic[0].astype(np.float64).copy()
+    K0[:2, :] *= resize_ratio0
+    K0[0, 2] = real_wh0[0] / 2.0
+    K0[1, 2] = real_wh0[1] / 2.0
+    fx0 = float(K0[0, 0])
+    camera_angle_x = 2.0 * math.atan(float(real_wh0[0]) / (2.0 * fx0))
+
+    for i in range(N):
+        w2c = extrinsic_w2c[i].astype(np.float64)
+        c2w = np.linalg.inv(w2c)
+        c2w = opencv_to_opengl(c2w)
+
+        real_wh = original_coords[i, -2:].astype(np.float64)  # (W,H)
+        resize_ratio = max(real_wh) / float(img_size)
+
+        K = intrinsic[i].astype(np.float64).copy()
+        K[:2, :] *= resize_ratio
+        K[0, 2] = real_wh[0] / 2.0
+        K[1, 2] = real_wh[1] / 2.0
+
+        file_path = image_paths[i].replace("\\", "/")
+
+        frames.append({
+            "file_path": file_path,
+            "transform_matrix": c2w.tolist(),
+            "fl_x": float(K[0, 0]), "fl_y": float(K[1, 1]),
+            "cx": float(K[0, 2]), "cy": float(K[1, 2]),
+            "w": int(real_wh[0]), "h": int(real_wh[1]),
+            "camera_model": "PINHOLE",
+        })
+
+    transforms = {
+        "camera_angle_x": float(camera_angle_x),
+        "frames": frames,
+    }
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(transforms, f, indent=2)
+    print(f"[OK][{now}] wrote transforms.json: {out_path}  (#frames={N})")
+
+
+# -------------------------
+# Packing utilities
+# -------------------------
+def list_images_sorted(folder: str):
+    exts = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+    paths = []
+    for p in glob.glob(os.path.join(folder, "*")):
+        if os.path.splitext(p.lower())[1] in exts:
+            paths.append(p)
+    paths.sort()
+    return paths
+
+
+def safe_stem(p: str) -> str:
+    s = Path(p).stem
+    # avoid crazy chars in filename
+    return "".join([c if c.isalnum() or c in ("-", "_") else "_" for c in s])
+
+def to_4x4(extri):
+    extri = np.asarray(extri)
+    if extri.ndim == 3 and extri.shape[1:] == (3, 4):
+        N = extri.shape[0]
+        T = np.zeros((N, 4, 4), dtype=np.float64)
+        T[:, :3, :4] = extri
+        T[:, 3, 3] = 1.0
+        return T
+    return extri.astype(np.float64)
 
 
 def run_VGGT(model, images, device, dtype, resolution=518):
@@ -224,7 +357,7 @@ def demo_fn(args):
     if args.output_dir is None:
         args.output_dir = os.path.join(args.scene_dir)
 
-    print("Arguments:", vars(args))
+    print("[{now}] Arguments:", vars(args))
 
     # Set seed for reproducibility
     np.random.seed(args.seed)
@@ -247,13 +380,16 @@ def demo_fn(args):
     model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
     model.eval()
     model = model.to(dtype=dtype, device=device)
-    print(f"Model loaded")
+    print(f"-- Model loaded --")
 
     # Get image paths and preprocess them
     image_dir = os.path.join(args.scene_dir, "images")
-    image_path_list = glob.glob(os.path.join(image_dir, "*"))
+    image_path_list = list_images_sorted(image_dir)
     if len(image_path_list) == 0:
         raise ValueError(f"No images found in {image_dir}")
+
+    print(f"[OK][{now}] train images: {len(image_path_list)} from {image_dir}")
+
     base_image_path_list = [os.path.basename(path) for path in image_path_list]
 
     # Load images and original coordinates
@@ -262,14 +398,94 @@ def demo_fn(args):
     img_load_resolution = 1024
 
     images, original_coords = load_and_preprocess_images_square(image_path_list, img_load_resolution)
-    print(f"Loaded {len(images)} images from {image_dir}")
+    print(f"[OK][{now}] Loaded {len(images)} images from {image_dir}")
 
     # Run VGGT to estimate camera and depth
     # Run with 518x518 images
     extrinsic, intrinsic, depth_map, depth_conf = run_VGGT(model, images, device, dtype, vggt_fixed_resolution)
     points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
     # images = images.float()
-    
+
+    # save as blender - transforms.json
+    print(f"[OK][{now}] train poses computed: {extrinsic.shape[0]} images")
+    out_name = f"transforms_anomaly_free_poses.json"
+    out_path = os.path.join(args.output_dir, out_name)
+    write_transforms_json_from_vggt(
+        extrinsic_w2c=extrinsic,
+        intrinsic=intrinsic,
+        image_paths=base_image_path_list,
+        original_coords=original_coords.cpu().numpy() if torch.is_tensor(original_coords) else original_coords,
+        img_size=vggt_fixed_resolution,
+        out_path=out_path,
+    )
+
+    if args.test_sparse_view:
+        print(f"TESTING SPARSE VIEW INPUT")
+        print(f"[OK][{now}] Preparing query images from {args.eval_dir}")
+        subsets = ["Burrs", "good", "Missing", "Stains"]
+        all_queries = []
+        for s in subsets:
+            d = os.path.join(args.eval_dir, s)
+            if os.path.isdir(d):
+                q = list_images_sorted(d)
+                all_queries += [(s, p) for p in q]
+        if not all_queries:
+            raise RuntimeError(f"No query images found under {args.eval_dir}/{{burrs,good,missing,stains}}")
+        print(f"[OK][{now}] total queries: {len(all_queries)}")
+
+        jsonl_path = os.path.join(args.out_dir, "query_poses_merged.jsonl")
+        if args.save_jsonl and os.path.exists(jsonl_path):
+            os.remove(jsonl_path)
+
+        for idx, (subset, qpath) in enumerate(
+            tqdm(all_queries, desc="Processing queries", unit="img")
+        ):
+            # load single query
+            q_imgs, q_coords_t = load_and_preprocess_images_square([qpath], args.img_load_resolution)
+            q_coords = q_coords_t.cpu().numpy() if torch.is_tensor(q_coords_t) else q_coords_t
+
+            # pack = train + query (no file copy)
+            packed_imgs = torch.cat([images, q_imgs], dim=0)
+            packed_coords = np.concatenate([original_coords, q_coords], axis=0)
+            packed_paths = image_path_list + [qpath]
+
+            packed_paths_name = [os.path.basename(p) for p in packed_paths]
+
+            # run vggt
+            extri, intri, _, _ = run_VGGT(model, packed_imgs, device, dtype, args.vggt_resolution)
+
+            # write per-query transforms (train + this query)
+            out_name = f"transforms_{subset}_{idx:05d}_{safe_stem(qpath)}.json"
+            out_path = os.path.join(args.out_dir, "verbose_transforms_file", out_name)
+            write_transforms_json_from_vggt(
+                extrinsic_w2c=extri,
+                intrinsic=intri,
+                image_paths=packed_paths_name,
+                original_coords=packed_coords,
+                img_size=args.vggt_resolution,
+                out_path=out_path,
+            )
+
+            # (optional) also append just the query pose into a merged jsonl
+            if args.save_jsonl:
+                # query is the last frame
+                q_c2w_opengl = np.linalg.inv(to_4x4(extri)[-1])
+                q_c2w_opengl = opencv_to_opengl(q_c2w_opengl)
+                rec = {
+                    "subset": subset,
+                    "query_path": qpath.replace("\\", "/"),
+                    "transforms_json": out_path.replace("\\", "/"),
+                    "query_transform_matrix": q_c2w_opengl.tolist(),
+                }
+                with open(jsonl_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec) + "\n")
+
+            if (idx + 1) % 10 == 0 or idx == 0:
+                print(f"[{idx+1}/{len(all_queries)}] done")
+
+        print("[DONE][{now}] all queries processed")
+
+
     if args.save_depth:
         os.makedirs(args.output_dir, exist_ok=True)
         depth_map_dir = os.path.join(args.output_dir, "verbose", "depth_map")
@@ -302,6 +518,8 @@ def demo_fn(args):
 
     images = images.to(device, dtype)
     original_coords = original_coords.to(device)
+
+    print(f"[OK] Converting to COLMAP format and saving reconstruction")
 
     if args.use_ba:
         image_size = np.array(images.shape[-2:])
@@ -461,6 +679,7 @@ def rename_colmap_recons_and_rescale_camera(
 
 if __name__ == "__main__":
     args = parse_args()
+    
     with torch.no_grad():
         demo_fn(args)
     if args.adjust_folder:

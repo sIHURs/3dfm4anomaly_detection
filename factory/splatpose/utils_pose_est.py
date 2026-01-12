@@ -575,6 +575,8 @@ def downsampling(x, size, to_tensor=False, bin=True):
         down[down > 0] = 1
     return down
 
+def is_image_file(p: str) -> bool:
+    return p.lower().endswith((".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"))
 
 class DefectDataset(Dataset):
     def __init__(self, dataset_dir, class_name, set='train', get_mask=True, get_features=True,
@@ -649,9 +651,18 @@ class DefectDataset(Dataset):
                 elif self.get_mask:
                     self.masks.append(0)
 
-            if self.width is None:
-                with PILImage.open(os.path.join(img_dir, img_paths[0])) as img:
-                    self.width, self.height = img.size
+                if self.width is None:
+                    for p in img_paths:
+                        full_path = os.path.join(img_dir, p)
+
+                        if not os.path.isfile(full_path):
+                            continue
+                        if not is_image_file(p):
+                            continue
+
+                        with PILImage.open(full_path) as img:
+                            self.width, self.height = img.size
+                        break
 
 
         self.img_mean = torch.FloatTensor(norm_mean)[:, None, None]
@@ -982,3 +993,13 @@ class ColmapDefectDataset(Dataset):
             mask_tensor = torch.zeros(self.height, self.width)
 
         return img, label, mask_tensor
+    
+def load_pose_lookup(transforms_json_path: str):
+        with open(transforms_json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        pose_by_name = {}
+        for fr in data.get("frames", []):
+            name = os.path.basename(fr["file_path"])
+            pose_by_name[name] = np.array(fr["transform_matrix"], dtype=np.float32)
+        return pose_by_name, data.get("camera_angle_x", None)

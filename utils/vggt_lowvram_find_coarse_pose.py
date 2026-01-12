@@ -203,6 +203,8 @@ def main():
         raise RuntimeError(f"No train images found in {train_dir}")
     print(f"[OK] train images: {len(train_paths)}")
 
+    train_image_names = [os.path.basename(p) for p in train_paths]
+
     # preload train tensors ONCE (fast!)
     train_imgs, train_coords_t = load_and_preprocess_images_square(train_paths, args.img_load_resolution)
     train_coords = train_coords_t.cpu().numpy() if torch.is_tensor(train_coords_t) else train_coords_t
@@ -215,8 +217,8 @@ def main():
     write_transforms_json_from_vggt(
         extrinsic_w2c=train_extri,
         intrinsic=train_intri,
-        image_paths=train_paths,
-        original_coords=train_coords_t.cpu().numpy(),
+        image_paths=train_image_names,
+        original_coords=train_coords,
         img_size=args.vggt_resolution,
         out_path=out_path,
     )
@@ -253,6 +255,8 @@ def main():
         packed_coords = np.concatenate([train_coords, q_coords], axis=0)
         packed_paths = train_paths + [qpath]
 
+        packed_paths_name = [os.path.basename(p) for p in packed_paths]
+
         # run vggt
         extri, intri, depth, conf = run_VGGT(model, packed_imgs, device, dtype, args.vggt_resolution)
 
@@ -262,7 +266,7 @@ def main():
         write_transforms_json_from_vggt(
             extrinsic_w2c=extri,
             intrinsic=intri,
-            image_paths=packed_paths,
+            image_paths=packed_paths_name,
             original_coords=packed_coords,
             img_size=args.vggt_resolution,
             out_path=out_path,
