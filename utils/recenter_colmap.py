@@ -1,8 +1,29 @@
 import os
 from typing import Literal, Optional, Dict, Any
 import argparse
+import json
 import numpy as np
 import colmap
+
+
+def _save_T(save_path: str, T: np.ndarray, meta: Dict[str, Any]) -> None:
+    """
+    Save T to .json or .npy
+      - json: {"T":[...], ...meta}
+      - npy: raw (3,) float64
+    """
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    ext = os.path.splitext(save_path)[1].lower()
+
+    if ext == ".npy":
+        np.save(save_path, T.astype(np.float64))
+    elif ext == ".json":
+        payload = {"T": T.astype(float).tolist()}
+        payload.update(meta)
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+    else:
+        raise ValueError("save_T_path must end with .json or .npy")
 
 
 def recenter_colmap_model(
@@ -10,6 +31,7 @@ def recenter_colmap_model(
     out_sparse_dir: str,
     center_by: Literal["auto", "points", "cameras"] = "auto",
     overwrite: bool = True,
+    save_T_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Recenter a COLMAP sparse model by shifting either:
@@ -18,26 +40,11 @@ def recenter_colmap_model(
 
     The transform applied is: x' = x - T  (world coords)
     For camera extrinsics (world->cam): R' = R (unchanged), t' = t + R*T
-
-    Args:
-        in_sparse_dir:  Path to input sparse/0 directory with cameras.bin, images.bin, points3D.bin (points may be absent).
-        out_sparse_dir: Path to output sparse/0 directory to write the recentered model.
-        center_by:      "auto" (prefer points if available), or force "points" / "cameras".
-        overwrite:      If True, create/overwrite the output directory.
-
-    Returns:
-        A dict with useful info:
-            {
-              "T": np.ndarray shape (3,), the shift applied,
-              "used": "points3D centroid" or "camera-centers mean",
-              "num_images": int,
-              "num_points": int
-            }
     """
 
     in_sparse_dir = os.path.join(in_sparse_dir, "sparse", "0")
     out_sparse_dir = os.path.join(out_sparse_dir, "sparse", "0")
-    
+
     # --- I/O prep ---
     if not os.path.isdir(in_sparse_dir):
         raise FileNotFoundError(f"Input sparse dir not found: {in_sparse_dir}")
@@ -47,7 +54,6 @@ def recenter_colmap_model(
     else:
         if os.path.exists(out_sparse_dir) and os.listdir(out_sparse_dir):
             raise FileExistsError(f"Output dir exists and is not empty: {out_sparse_dir}")
-
 
     # --- Load model ---
     cameras, images, points3D = colmap.read_model(in_sparse_dir, ext=".bin")
@@ -85,10 +91,23 @@ def recenter_colmap_model(
         T = C_arr.mean(axis=0)
         used = "camera-centers mean"
 
+    _save_T(
+        save_T_path,
+        T,
+        meta={
+            "used": used,
+            "center_by": center_by,
+            "in_sparse_dir": in_sparse_dir,
+            "out_sparse_dir": out_sparse_dir,
+            "num_images": int(len(images)),
+            "num_points": int(len(points3D)),
+        },
+    )
+    print(f"✅ Saved T to: {save_T_path}")
+
     # --- Shift points (if present) ---
     if use_points and points_arr is not None:
         points_new = points_arr - T
-        # write back
         for (pid, p), new_xyz in zip(points3D.items(), points_new):
             p.xyz = new_xyz.astype(np.float64)
             points3D[pid] = p
@@ -103,7 +122,6 @@ def recenter_colmap_model(
     if not np.allclose(C_new, C_arr - T, atol=1e-6):
         raise AssertionError("Camera centers not shifted correctly. Check math/conventions.")
 
-    # write back tvec
     for i, img_id in enumerate(img_ids):
         images[img_id].tvec = t_new[i].astype(np.float64)
 
@@ -118,7 +136,9 @@ def recenter_colmap_model(
         "num_images": len(images),
         "num_points": len(points3D),
         "out_dir": out_sparse_dir,
+        "T_path": save_T_path,
     }
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -128,13 +148,13 @@ def parse_args():
         "--in_sparse_dir",
         type=str,
         required=True,
-        help="Path to input sparse/0 directory containing COLMAP model files.",
+        help="Path to input scene dir (will use <in>/sparse/0).",
     )
     parser.add_argument(
         "--out_sparse_dir",
         type=str,
         required=True,
-        help="Path to output sparse/0 directory to save recentered model.",
+        help="Path to output scene dir (will write <out>/sparse/0).",
     )
     parser.add_argument(
         "--center_by",
@@ -148,10 +168,16 @@ def parse_args():
         action="store_true",
         help="Overwrite output folder if it already exists.",
     )
+    # ✅ NEW
+    parser.add_argument(
+        "--save_T",
+        type=str,
+        default="",
+        help="Where to save T (.json or .npy). Default: <out>/recenter_T.json",
+    )
     return parser.parse_args()
 
 
-# ---------- Example usage ----------
 if __name__ == "__main__":
     args = parse_args()
     recenter_colmap_model(
@@ -159,4 +185,5 @@ if __name__ == "__main__":
         out_sparse_dir=args.out_sparse_dir,
         center_by=args.center_by,
         overwrite=args.overwrite,
+        save_T_path=(args.save_T if args.save_T else None),
     )

@@ -5,6 +5,7 @@ import wandb
 
 import torch
 import numpy as np
+import random
 from torchvision import transforms
 from sklearn.metrics import roc_auc_score, precision_recall_curve, roc_curve
 from scipy.ndimage import gaussian_filter
@@ -48,6 +49,7 @@ pre_parser.add_argument("--result", type=str, help="path of output result", defa
 pre_parser.add_argument("--model_path_splatpose", type=str, help="path of 3dgs output model", default="output")
 pre_parser.add_argument("--pcd_name", type=str, help="name of the processed 3dgs poind cloud", default="point_cloud.ply")
 pre_parser.add_argument("--json_name", type=str, help="name of the camera pose json file", default="transforms.json")
+pre_parser.add_argument("--retrieval_model", type=str, help="model for init c2w", default="loftr")
 
 args = pre_parser.parse_args()
 
@@ -58,7 +60,23 @@ if args.use_wandb:
     )
 else:
     wandb.init(mode="disabled")
-    
+
+
+def seed_everything(seed: int, deterministic: bool = True):
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    if deterministic:
+        torch.backends.cudnn.enabled = True
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
+
+seed_everything(args.seed, deterministic=True)
 
 result_dir = os.path.join(args.result, f"results_{args.prefix}_{args.seed}", args.classname)
 model_dir = os.path.join(args.model_path_splatpose, args.classname)
@@ -73,7 +91,8 @@ test_images, reference_images, all_labels, gt_masks, times, total_times, filenam
                                                                                     pcd_name=args.pcd_name,
                                                                                     json_name=args.json_name,
                                                                                     loftr_batch=args.loftr_batch,
-                                                                                    loftr_resolution=args.loftr_resolution)
+                                                                                    loftr_resolution=args.loftr_resolution,
+                                                                                    retrieval=args.retrieval_model)
 
 # todo: some thing wrong with wandb output
 if args.use_wandb:

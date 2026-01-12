@@ -9,15 +9,19 @@ from gaussian_splatting.render import *
 from gaussian_splatting.scene.cameras import Camera
 
 import torch
+import json
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-from utils_pose_est import DefectDataset, pose_retrieval_loftr, camera_transf, build_loftr, pose_retrieval_loftr_batched
+from utils_pose_est import DefectDataset, pose_retrieval_loftr, camera_transf, build_loftr, pose_retrieval_loftr_batched, load_pose_lookup
 
 from torchvision.transforms.functional import to_pil_image
 
 from pathlib import Path
 LOFTR_CKPT_PATH = Path(__file__).resolve().parents[1] / "splatpose" /"PAD_utils" / "model" / "indoor_ds_new.ckpt"
+
+# todo: just tmp for testing
+TEST_QUERY_JSON_PATH = "/home/wangyifa/tmp/3dfm4anomaly_detection/scripts/test_MAD_Sim_vggt_find_queryimg_coarse_pose/3dgs_model/01Gorilla/transforms_query_poses.json"
 
 def main_pose_estimation(cur_class, 
                          result_dir, 
@@ -28,7 +32,8 @@ def main_pose_estimation(cur_class,
                          pcd_name="point_cloud.ply", 
                          json_name="transforms.json",
                          loftr_batch=32,
-                         loftr_resolution=(128,128)):
+                         loftr_resolution=(128,128),
+                         retrieval="loftr"):
     
     result_dir = result_dir
     output_dir = os.path.join(model_dir_location, "output")
@@ -36,15 +41,21 @@ def main_pose_estimation(cur_class,
     data_dir = "MAD-Sim/" if data_dir is None else data_dir
     trainset = DefectDataset(data_dir, cur_class, "train", True, True, gt_file=json_name)
 
-    # train_imgs = torch.cat([a[0][None,...] for a in trainset], dim=0)
-    # train_poses = np.concatenate([np.array(a["transform_matrix"])[None,...] for a in trainset.camera_transforms["frames"]])
-    # train_imgs = torch.movedim(torch.nn.functional.interpolate(train_imgs, (400,400)), 1, 3).numpy()
-    train_imgs = torch.cat([a[0][None, ...] for a in trainset], dim=0)          # N, C, H, W
-    train_imgs = torch.nn.functional.interpolate(train_imgs, loftr_resolution)        # N,C,400,400
-    train_imgs = torch.movedim(train_imgs, 1, 3).contiguous()                   # N,400,400,C
+    if retrieval == "loftr":
+        # train_imgs = torch.cat([a[0][None,...] for a in trainset], dim=0)
+        # train_poses = np.concatenate([np.array(a["transform_matrix"])[None,...] for a in trainset.camera_transforms["frames"]])
+        # train_imgs = torch.movedim(torch.nn.functional.interpolate(train_imgs, (400,400)), 1, 3).numpy()
+        train_imgs = torch.cat([a[0][None, ...] for a in trainset], dim=0)          # N, C, H, W
+        train_imgs = torch.nn.functional.interpolate(train_imgs, loftr_resolution)        # N,C,400,400
+        train_imgs = torch.movedim(train_imgs, 1, 3).contiguous()                   # N,400,400,C
 
-    train_imgs = (train_imgs * 255).to(device="cuda", dtype=torch.float16)
-    train_poses = np.stack([np.array(f["transform_matrix"]) for f in trainset.camera_transforms["frames"]], axis=0)
+        train_imgs = (train_imgs * 255).to(device="cuda", dtype=torch.float16)
+    
+        train_poses = np.stack([np.array(f["transform_matrix"]) for f in trainset.camera_transforms["frames"]], axis=0)
+    elif retrieval == "vggt":
+        pose_by_name, _ = load_pose_lookup(TEST_QUERY_JSON_PATH)
+    else:
+        raise NotImplementedError(f"Retrieval {retrieval} not implemented!")
 
     testset = DefectDataset(data_dir, cur_class, "test", True, True, gt_file=json_name)
     camera_angle_x = trainset.camera_angle
@@ -96,27 +107,42 @@ def main_pose_estimation(cur_class,
                                     pcd_name))
     
     print("STARTING POSE ESTIMATION")
-    
+        
     for i in tqdm(range(len(testset))):
         cur_path = testset.images[i].split("/")
-        filename = f"{cur_path[-2]}_{cur_path[-1]}.png"
+        stem = os.path.splitext(cur_path[-1])[0]
+        # filename = f"{cur_path[-2]}_{stem}.png"  # example: burrs_000.png
+        cls = cur_path[-2]   # Burrs
+        if not cls in stem:
+            filename = f"{cls}_{stem}.png"
+        else:
+            filename = f"{stem}.png"
         filenames.append(filename)
-
+        
         set_entry = testset[i]
         
         all_labels.append(set_entry[1])
         
         gt_masks.append(set_entry[2].cpu().numpy())
-        # obs_img = torch.movedim(torch.nn.functional.interpolate(set_entry[0][None,...], (400, 400)).squeeze(), 0, 2)
-        obs_img = torch.nn.functional.interpolate(set_entry[0][None, ...], loftr_resolution).squeeze(0)  # C,H,W
-        obs_img = torch.movedim(obs_img, 0, 2).contiguous()                                       # H,W,C
-        obs_img = (obs_img * 255).to("cuda", dtype=torch.float16)
-
+        
         loftr_start.record()
+        if retrieval == "loftr":
+            # obs_img = torch.movedim(torch.nn.functional.interpolate(set_entry[0][None,...], (400, 400)).squeeze(), 0, 2)
+            obs_img = torch.nn.functional.interpolate(set_entry[0][None, ...], loftr_resolution).squeeze(0)  # C,H,W
+            obs_img = torch.movedim(obs_img, 0, 2).contiguous()                                       # H,W,C
+            obs_img = (obs_img * 255).to("cuda", dtype=torch.float16)
 
-        c2w_init_idx = pose_retrieval_loftr_batched(matcher, train_imgs, obs_img, batch_size=loftr_batch)
-        c2w_init_np = train_poses[c2w_init_idx]
-
+            c2w_init_idx = pose_retrieval_loftr_batched(matcher, train_imgs, obs_img, batch_size=loftr_batch)
+            c2w_init_np = train_poses[c2w_init_idx]
+        elif retrieval == "vggt":
+            if filename not in pose_by_name:
+                raise KeyError(
+                    f"Pose not found for {filename}. Example keys: {list(pose_by_name.keys())[:5]}"
+                )
+            c2w_init_np = pose_by_name[filename]
+        else:
+            raise NotImplementedError(f"Retrieval {retrieval} not implemented!")
+        
         pose_start.record()
         c2w_init = torch.from_numpy(c2w_init_np).float().to("cuda")
 
