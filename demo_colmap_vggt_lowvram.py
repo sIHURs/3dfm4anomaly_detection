@@ -408,7 +408,7 @@ def demo_fn(args):
 
     # save as blender - transforms.json
     print(f"[OK][{now}] train poses computed: {extrinsic.shape[0]} images")
-    out_name = f"transforms_anomaly_free_poses.json"
+    out_name = f"transforms_anomaly_free_poses_uncertered.json"
     out_path = os.path.join(args.output_dir, out_name)
     write_transforms_json_from_vggt(
         extrinsic_w2c=extrinsic,
@@ -433,7 +433,7 @@ def demo_fn(args):
             raise RuntimeError(f"No query images found under {args.eval_dir}/{{burrs,good,missing,stains}}")
         print(f"[OK][{now}] total queries: {len(all_queries)}")
 
-        jsonl_path = os.path.join(args.out_dir, "query_poses_merged.jsonl")
+        jsonl_path = os.path.join(args.out_dir, "query_poses_merged_uncentered.jsonl")
         if args.save_jsonl and os.path.exists(jsonl_path):
             os.remove(jsonl_path)
 
@@ -455,7 +455,7 @@ def demo_fn(args):
             extri, intri, _, _ = run_VGGT(model, packed_imgs, device, dtype, args.vggt_resolution)
 
             # write per-query transforms (train + this query)
-            out_name = f"transforms_{subset}_{idx:05d}_{safe_stem(qpath)}.json"
+            out_name = f"transforms_{subset}_{idx:05d}_{safe_stem(qpath)}_uncentered.json"
             out_path = os.path.join(args.out_dir, "verbose_transforms_file", out_name)
             write_transforms_json_from_vggt(
                 extrinsic_w2c=extri,
@@ -490,25 +490,44 @@ def demo_fn(args):
         os.makedirs(args.output_dir, exist_ok=True)
         depth_map_dir = os.path.join(args.output_dir, "verbose", "depth_map")
         depth_conf_dir = os.path.join(args.output_dir, "verbose", "depth_conf_map")
+        depth_map_filt_dir = os.path.join(args.output_dir, "depths")
+        os.makedirs(depth_map_filt_dir, exist_ok=True)
         os.makedirs(depth_map_dir, exist_ok=True)
         os.makedirs(depth_conf_dir, exist_ok=True)
         
         save_depth_outputs(depth_map, depth_conf, out_dir=args.output_dir, prefix="vggt")
 
         for i in range(depth_map.shape[0]):
-            # save depth map
-            save_depth_png(
-                depth_map[i],
-                os.path.join(args.output_dir, "verbose", "depth_map", f"depth_{i:03d}.png")
-            )
-            # save depth confidence map
+            d = depth_map[i]
+            d_np = d.detach().float().cpu().numpy() if torch.is_tensor(d) else d.astype(np.float32)
+
             c = depth_conf[i]
             c_np = c.detach().float().cpu().numpy() if torch.is_tensor(c) else c.astype(np.float32)
+
+            if d_np.ndim == 3:
+                d_gray = d_np[..., 0]
+            else:
+                d_gray = d_np
+
+            conf_mask = c_np >= 1.5
+            d_filt = d_gray.copy()
+            d_filt[~conf_mask] = 0.0
+
+            save_depth_png(
+                d_gray,
+                os.path.join(depth_map_dir, f"depth_{i:03d}.png")
+            )
+
+            save_depth_png(
+                d_filt,
+                os.path.join(depth_map_filt_dir, f"depth_filt_{i:03d}.png")
+            )
+
             vmin = np.percentile(c_np, 5)
             vmax = np.percentile(c_np, 95)
             save_depth_png(
                 c_np,
-                os.path.join(args.output_dir, "verbose", "depth_conf_map", f"depth_conf_{i:03d}.png"),
+                os.path.join(depth_conf_dir, f"depth_conf_{i:03d}.png"),
                 vmin=vmin,
                 vmax=vmax
             )
