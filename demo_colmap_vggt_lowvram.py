@@ -78,9 +78,9 @@ def parse_args():
     )
 
     # todo: for sparse view experiments
-    parser.add_argument("--save_jsonl", action="store_true", help="also append query poses to a merged jsonl file")
     parser.add_argument("--eval_dir", help="dir that contains burrs/good/missing/stains")
     parser.add_argument("--test_sparse_view", action="store_true", default=False, help="test with sparse view input")
+    parser.add_argument("--query_batch_size", type=int, default=1, help="test with sparse view input")
 
     # todo: add more parameters for testing & experiments @yifan
     parser.add_argument("--save_depth", action="store_true", default=False, help="Save depth map and confidence map")
@@ -442,57 +442,62 @@ def demo_fn(args):
             raise RuntimeError(f"No query images found under {args.eval_dir}/{{burrs,good,missing,stains}}")
         print(f"[OK][{now}] total queries: {len(all_queries)}")
 
-        jsonl_path = os.path.join(args.output_dir, "query_poses_merged_uncentered.jsonl")
-        if args.save_jsonl and os.path.exists(jsonl_path):
-            os.remove(jsonl_path)
+    if args.test_sparse_view:
+        print(f"TESTING SPARSE VIEW INPUT")
+        print(f"[OK][{now}] Preparing query images from {args.eval_dir}")
 
-        for idx, (subset, qpath) in enumerate(
-            tqdm(all_queries, desc="Processing queries", unit="img")
-        ):
-            # load single query
-            q_imgs, q_coords_t = load_and_preprocess_images_square([qpath], img_load_resolution)
-            q_coords = q_coords_t.cpu().numpy() if torch.is_tensor(q_coords_t) else q_coords_t
+        subsets = ["Burrs", "good", "Missing", "Stains"]
+        all_queries = []
+        for s in subsets:
+            d = os.path.join(args.eval_dir, s)
+            if os.path.isdir(d):
+                q = list_images_sorted(d)
+                all_queries += [(s, p) for p in q]
 
-            # pack = train + query (no file copy)
-            packed_imgs = torch.cat([images, q_imgs], dim=0)
-            packed_coords = np.concatenate([original_coords, q_coords], axis=0)
-            packed_paths = image_path_list + [qpath]
-
-            packed_paths_name = [os.path.basename(p) for p in packed_paths]
-
-            # run vggt
-            extri, intri, _, _ = run_VGGT(model, packed_imgs, device, dtype, vggt_fixed_resolution)
-
-            # write per-query transforms (train + this query)
-            out_name = f"transforms_{subset}_{idx:05d}_{safe_stem(qpath)}.json"
-            out_path = os.path.join(args.output_dir, "verbose_transforms_file", out_name)
-            write_transforms_json_from_vggt(
-                extrinsic_w2c=extri,
-                intrinsic=intri,
-                image_paths=packed_paths_name,
-                original_coords=packed_coords.cpu().numpy() if torch.is_tensor(packed_coords) else packed_coords,
-                img_size=vggt_fixed_resolution,
-                out_path=out_path,
+        if not all_queries:
+            raise RuntimeError(
+                f"No query images found under {args.eval_dir}/{{burrs,good,missing,stains}}"
             )
+        print(f"[OK][{now}] total queries: {len(all_queries)}")
 
-            # (optional) also append just the query pose into a merged jsonl
-            if args.save_jsonl:
-                # query is the last frame
-                q_c2w_opengl = np.linalg.inv(to_4x4(extri)[-1])
-                q_c2w_opengl = opencv_to_opengl(q_c2w_opengl)
-                rec = {
-                    "subset": subset,
-                    "query_path": qpath.replace("\\", "/"),
-                    "transforms_json": out_path.replace("\\", "/"),
-                    "query_transform_matrix": q_c2w_opengl.tolist(),
-                }
-                with open(jsonl_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(rec) + "\n")
+        # ------------------------------------------------------------
+        # 1) Keep only first 10 train images (and aligned metadata)
+        # ------------------------------------------------------------
+        keep_train = 10
+        images_10 = images[:keep_train]  # torch tensor (T, C, H, W)
+        original_coords_10 = original_coords[:keep_train]  # numpy or tensor
+        image_path_list_10 = image_path_list[:keep_train]  # list[str]
 
-            if (idx + 1) % 10 == 0 or idx == 0:
-                print(f"[{idx+1}/{len(all_queries)}] done")
+        # ------------------------------------------------------------
+        # 2) Load ALL query images once
+        # ------------------------------------------------------------
+        qpaths_all = [p for (_, p) in all_queries]
+        q_imgs, q_coords_t = load_and_preprocess_images_square(qpaths_all, img_load_resolution)
+        q_coords = q_coords_t.cpu().numpy() if torch.is_tensor(q_coords_t) else q_coords_t
 
-        print("[DONE][{now}] all queries processed")
+        # ------------------------------------------------------------
+        # 3) Pack: 10 train + ALL queries, run VGGT ONCE
+        # ------------------------------------------------------------
+        packed_imgs = torch.cat([images_10, q_imgs], dim=0)
+        packed_coords = np.concatenate([original_coords_10, q_coords], axis=0)
+        packed_paths = image_path_list_10 + qpaths_all
+        packed_paths_name = [os.path.basename(p) for p in packed_paths]
+
+        print(f"[OK][{now}] Packed {len(image_path_list_10)} train + {len(qpaths_all)} query = {len(packed_paths)} total frames")
+
+        extri, intri, _, _ = run_VGGT(model, packed_imgs, device, dtype, vggt_fixed_resolution)
+
+        out_path = os.path.join(args.output_dir, "transforms_query_poses_uncentered.json")
+        write_transforms_json_from_vggt(
+            extrinsic_w2c=extri,
+            intrinsic=intri,
+            image_paths=packed_paths_name,
+            original_coords=packed_coords,
+            img_size=vggt_fixed_resolution,
+            out_path=out_path,
+        )
+
+        print(f"[DONE][{now}] all queries processed")
     tm.mark("after_find_query_poses")
 
     if args.save_depth:
