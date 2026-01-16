@@ -50,6 +50,8 @@ pre_parser.add_argument("--model_path_splatpose", type=str, help="path of 3dgs o
 pre_parser.add_argument("--pcd_name", type=str, help="name of the processed 3dgs poind cloud", default="point_cloud.ply")
 pre_parser.add_argument("--json_name", type=str, help="name of the camera pose json file", default="transforms.json")
 pre_parser.add_argument("--retrieval_model", type=str, help="model for init c2w", default="loftr")
+pre_parser.add_argument("--query_json_path", type=str, help="path of the query camera pose json file", default="query_json_path.json")
+
 
 args = pre_parser.parse_args()
 
@@ -90,6 +92,7 @@ test_images, reference_images, all_labels, gt_masks, times, total_times, filenam
                                                                                     data_dir=data_dir,
                                                                                     pcd_name=args.pcd_name,
                                                                                     json_name=args.json_name,
+                                                                                    query_json_path=args.query_json_path,
                                                                                     loftr_batch=args.loftr_batch,
                                                                                     loftr_resolution=args.loftr_resolution,
                                                                                     retrieval=args.retrieval_model)

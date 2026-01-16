@@ -31,6 +31,7 @@ def main_pose_estimation(cur_class,
                          data_dir=None, 
                          pcd_name="point_cloud.ply", 
                          json_name="transforms.json",
+                         query_json_path="transforms_query_poses.json",
                          loftr_batch=32,
                          loftr_resolution=(128,128),
                          retrieval="loftr"):
@@ -53,7 +54,7 @@ def main_pose_estimation(cur_class,
     
         train_poses = np.stack([np.array(f["transform_matrix"]) for f in trainset.camera_transforms["frames"]], axis=0)
     elif retrieval == "vggt":
-        pose_by_name, _ = load_pose_lookup(TEST_QUERY_JSON_PATH)
+        pose_by_name, _ = load_pose_lookup(query_json_path)
     else:
         raise NotImplementedError(f"Retrieval {retrieval} not implemented!")
 

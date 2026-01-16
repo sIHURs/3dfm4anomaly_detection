@@ -214,8 +214,8 @@ class Aggregator(nn.Module):
         images = (images - self._resnet_mean) / self._resnet_std
 
         # Reshape to [B*S, C, H, W] for patch embedding
-        if verbose:
-            print("Running patch embedding")
+        # if verbose:
+        #     print("Running patch embedding")
         images = images.view(B * S, C_in, H, W)
         patch_tokens = self.patch_embed(images)
         del images
@@ -256,9 +256,9 @@ class Aggregator(nn.Module):
         output_list = {}
 
         iter_obj = range(self.aa_block_num)
-        if verbose:
-            from tqdm import tqdm
-            iter_obj = tqdm(iter_obj, "Running attention")
+        # if verbose:
+        #     from tqdm import tqdm
+        #     iter_obj = tqdm(iter_obj, "Running attention")
         for _ in iter_obj:
             assert tokens.dtype == dtype
             for attn_type in self.aa_order:

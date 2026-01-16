@@ -30,10 +30,11 @@ import trimesh
 import pycolmap
 import cv2
 import json
-import tqdm
+from tqdm import tqdm
 from datetime import datetime
 import math
 now = datetime.now()
+from utils.time_recorder import SpanTimer
 
 from factory.vggt_low_vram.vggt.models.vggt import VGGT
 from factory.vggt_low_vram.vggt.utils.load_fn import load_and_preprocess_images_square
@@ -292,7 +293,7 @@ def write_transforms_json_from_vggt(
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(transforms, f, indent=2)
-    print(f"[OK][{now}] wrote transforms.json: {out_path}  (#frames={N})")
+    # print(f"[OK][{now}] wrote transforms.json: {out_path}  (#frames={N})")
 
 
 # -------------------------
@@ -359,6 +360,9 @@ def demo_fn(args):
 
     print("[{now}] Arguments:", vars(args))
 
+    # set time recorder
+    tm = SpanTimer()
+
     # Set seed for reproducibility
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -375,11 +379,13 @@ def demo_fn(args):
     print(f"Using dtype: {dtype}")
 
     # Run VGGT for camera and depth estimation
+    tm.mark("before_load_images")
     model = VGGT()
     _URL = "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
     model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
     model.eval()
     model = model.to(dtype=dtype, device=device)
+    tm.mark("after_load_images")
     print(f"-- Model loaded --")
 
     # Get image paths and preprocess them
@@ -402,13 +408,15 @@ def demo_fn(args):
 
     # Run VGGT to estimate camera and depth
     # Run with 518x518 images
+    tm.mark("before_run_vggt")
     extrinsic, intrinsic, depth_map, depth_conf = run_VGGT(model, images, device, dtype, vggt_fixed_resolution)
+    tm.mark("after_run_vggt")
     points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
     # images = images.float()
 
     # save as blender - transforms.json
     print(f"[OK][{now}] train poses computed: {extrinsic.shape[0]} images")
-    out_name = f"transforms_anomaly_free_poses.json"
+    out_name = f"transforms_anomaly_free_poses_uncentered.json"
     out_path = os.path.join(args.output_dir, out_name)
     write_transforms_json_from_vggt(
         extrinsic_w2c=extrinsic,
@@ -419,6 +427,7 @@ def demo_fn(args):
         out_path=out_path,
     )
 
+    tm.mark("before_find_query_poses")
     if args.test_sparse_view:
         print(f"TESTING SPARSE VIEW INPUT")
         print(f"[OK][{now}] Preparing query images from {args.eval_dir}")
@@ -433,7 +442,7 @@ def demo_fn(args):
             raise RuntimeError(f"No query images found under {args.eval_dir}/{{burrs,good,missing,stains}}")
         print(f"[OK][{now}] total queries: {len(all_queries)}")
 
-        jsonl_path = os.path.join(args.out_dir, "query_poses_merged.jsonl")
+        jsonl_path = os.path.join(args.output_dir, "query_poses_merged_uncentered.jsonl")
         if args.save_jsonl and os.path.exists(jsonl_path):
             os.remove(jsonl_path)
 
@@ -441,7 +450,7 @@ def demo_fn(args):
             tqdm(all_queries, desc="Processing queries", unit="img")
         ):
             # load single query
-            q_imgs, q_coords_t = load_and_preprocess_images_square([qpath], args.img_load_resolution)
+            q_imgs, q_coords_t = load_and_preprocess_images_square([qpath], img_load_resolution)
             q_coords = q_coords_t.cpu().numpy() if torch.is_tensor(q_coords_t) else q_coords_t
 
             # pack = train + query (no file copy)
@@ -452,17 +461,17 @@ def demo_fn(args):
             packed_paths_name = [os.path.basename(p) for p in packed_paths]
 
             # run vggt
-            extri, intri, _, _ = run_VGGT(model, packed_imgs, device, dtype, args.vggt_resolution)
+            extri, intri, _, _ = run_VGGT(model, packed_imgs, device, dtype, vggt_fixed_resolution)
 
             # write per-query transforms (train + this query)
             out_name = f"transforms_{subset}_{idx:05d}_{safe_stem(qpath)}.json"
-            out_path = os.path.join(args.out_dir, "verbose_transforms_file", out_name)
+            out_path = os.path.join(args.output_dir, "verbose_transforms_file", out_name)
             write_transforms_json_from_vggt(
                 extrinsic_w2c=extri,
                 intrinsic=intri,
                 image_paths=packed_paths_name,
-                original_coords=packed_coords,
-                img_size=args.vggt_resolution,
+                original_coords=packed_coords.cpu().numpy() if torch.is_tensor(packed_coords) else packed_coords,
+                img_size=vggt_fixed_resolution,
                 out_path=out_path,
             )
 
@@ -484,7 +493,7 @@ def demo_fn(args):
                 print(f"[{idx+1}/{len(all_queries)}] done")
 
         print("[DONE][{now}] all queries processed")
-
+    tm.mark("after_find_query_poses")
 
     if args.save_depth:
         os.makedirs(args.output_dir, exist_ok=True)
@@ -631,6 +640,15 @@ def demo_fn(args):
 
     # Save point cloud for fast visualization
     trimesh.PointCloud(points_3d, colors=points_rgb).export(os.path.join(args.output_dir, "sparse/points.ply"))
+
+
+    # print time recorder results
+    wall_s, cuda_s = tm.span("before_load_images", "after_load_images")
+    print(f"load vggt: "f"wall={wall_s:.3f}s | "f"cuda={cuda_s:.3f}s")
+    wall_s, cuda_s = tm.span("before_run_vggt", "after_run_vggt")
+    print(f"run vggt: "f"wall={wall_s:.3f}s | "f"cuda={cuda_s:.3f}s")
+    wall_s, cuda_s = tm.span("before_find_query_poses", "after_find_query_poses")
+    print(f"find query poses: "f"wall={wall_s:.3f}s | "f"cuda={cuda_s:.3f}s")
 
     return True
 
