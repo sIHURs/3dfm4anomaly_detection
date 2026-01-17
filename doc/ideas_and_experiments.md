@@ -32,3 +32,4 @@ TODO
 
 ### One open question is whether the training images should include background context.
 When using training images with a pure white background, the vanilla 3DGS optimization only minimizes the loss on the training views. As a result, the Gaussians tend to explain the white background as well, which leads to artificial background Gaussians being created. These Gaussians can then cause occlusions when the object is observed from novel viewpoints.
+
