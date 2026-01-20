@@ -52,7 +52,7 @@ Furthermore, regarding densification control, the vanilla 3DGS strategy performs
 
 **image-level ROCAUC(%) (Seed=0)**
 
-|              | SplatPose | vggt_low+3dgs+optimize | vggt_low+3dgs+optimize (180views) | vggt_low+3dgs_mcmc |
+|              | SplatPose | vggt_low<br>+3dgs<br>+optimize | vggt_low<br>+3dgs<br>+optimize<br>(180 views) | vggt_low<br>+3dgs_mcmc |
 |--------------|-----------|------------------------|-----------------------------------|--------------------|
 | 01Gorilla    | 91.7±1.1  | 86.3 | 85.5 | 91.6 |
 | 02Unicorn    | 97.9±1.1  | 85.1 | 84.9 | 97.5 |
@@ -74,9 +74,40 @@ Furthermore, regarding densification control, the vanilla 3DGS strategy performs
 | 18Obesobeso  | 95.7±0.7  | 94.2 | 93.6 | 96.5 |
 | 19Bear       | 98.9±0.2  | 83.7 | 86.8 | 96.7 |
 | 20Puppy      | 96.1±0.9  | 77.4 | 78.4 | 90.8 |
-| **mean**     | 93.9±0.2  | 77.9 | 81.2 | 90.6 |
+| **mean**     | **93.9±0.2**  | **77.9** | **81.2** | **90.6** |
 
 Because of the limited evaluation time, all computations were performed only once, and the random seed was set to 0.
+
+**Image-level ROCAUC (%)** for all 20 classes under different proportions of training views (20%, 40%, 60%, 80%). However, when sampling images, I exclude the top 15 and bottom 15 views. Based on othe previous experiments, these views lack reliable depth and 3D geometric information (doppelganger effect), which negatively affects VGGT-based reconstruction.
+
+| Class | 20% | 40% | 60% | 80% |
+|------|-----:|-----:|-----:|-----:|
+| 01Gorilla | 78.0 | 86.5 | 89.8 | 90.3 |
+| 02Unicorn | 76.5 | 92.9 | 97.1 | 97.3 |
+| 03Mallard | 86.9 | 94.9 | 95.7 | 96.8 |
+| 04Turtle | 88.1 | 95.8 | 97.7 | 98.1 |
+| 05Whale | 79.5 | 86.5 | 92.7 | 93.0 |
+| 06Bird | 80.8 | 88.7 | 91.4 | 92.0 |
+| 07Owl | 68.3 | 79.6 | 79.7 | 79.4 |
+| 08Sabertooth | 67.9 | 81.7 | 91.1 | 92.1 |
+| 09Swan | 75.0 | 84.4 | 87.1 | 89.5 |
+| 10Sheep | 91.0 | 93.6 | 96.1 | 96.4 |
+| 11Pig | 85.1 | 92.1 | 95.2 | 95.6 |
+| 12Zalika | 78.4 | 87.3 | 90.5 | 90.8 |
+| 13Pheonix | 65.9 | 72.0 | 74.5 | 75.0 |
+| 14Elephant | 74.9 | 82.7 | 89.6 | 88.8 |
+| 15Parrot | 67.3 | 84.8 | 88.9 | 89.4 |
+| 16Cat | 79.4 | 84.3 | 86.5 | 87.8 |
+| 17Scorpion | 62.3 | 93.3 | 96.7 | 97.3 |
+| 18Obesobeso | 85.3 | 96.3 | 97.2 | 96.8 |
+| 19Bear | 69.0 | 97.0 | 98.3 | 98.5 |
+| 20Puppy | 70.9 | 87.0 | 91.9 | 91.9 |
+| **Average** | **76.5** | **88.1** | **91.4** | **91.8** |
+
+Implementation details: We select 10 training images together with all query images and estimate their camera poses using VGGT. When using the same random seed, the estimated query poses are in the same coordinate system as the 3DGS point cloud. If different seeds are used, the two coordinate systems can be aligned using the selected 10 training images. Due to pose prediction errors in VGGT, further pose refinement is still required. I use the same pose optimization strategy as described in SplatPose.
+
+Regarding the choice of k, under the 20% view setting the Gaussian Splatting reconstruction tends to be blurry. Therefore, a smaller k is used in this case. Based on preliminary experiments only on the 01Gorilla class, the AUROC no longer improves when k exceeds 100. As the result above, k is set to 100 for the 20% views setting, and to 150 for all other settings in the table.
+
 
 <!-- pixel-level ROCAUC
 
