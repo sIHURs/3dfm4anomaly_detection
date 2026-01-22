@@ -180,7 +180,7 @@ pip install --no-build-isolation -r requirements.txt
 
 cd submodules/diff-gaussian-rasterization
 git checkout 9c5c202
-pip install  . --no-build-isolation 
+pip install  . --no-build-isolation  
 
 # Optional: if use torch2.8.0 + cuda12.9 and turing arch, add header in rasterizer_impl.h
 

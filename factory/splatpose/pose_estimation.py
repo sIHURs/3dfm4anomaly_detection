@@ -20,9 +20,6 @@ from torchvision.transforms.functional import to_pil_image
 from pathlib import Path
 LOFTR_CKPT_PATH = Path(__file__).resolve().parents[1] / "splatpose" /"PAD_utils" / "model" / "indoor_ds_new.ckpt"
 
-# todo: just tmp for testing
-TEST_QUERY_JSON_PATH = "/home/wangyifa/tmp/3dfm4anomaly_detection/scripts/test_MAD_Sim_vggt_find_queryimg_coarse_pose/3dgs_model/01Gorilla/transforms_query_poses.json"
-
 def main_pose_estimation(cur_class, 
                          result_dir, 
                          model_dir_location, 
