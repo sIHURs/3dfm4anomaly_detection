@@ -82,12 +82,14 @@ def fix_mad_filenames(path_to_mad, classnames):
 # number of extra generated test samples
 k_augments = 5
 # change this path to the directory you want to fill with the "new" data set
-result_base_path = "MAD-Sim_3dgs"
+result_base_path = "PIAD-Sim_3dgs"
 # path to the MAD-Sim data set
-mad_base_path = "MAD-Sim/"
-classnames = ["01Gorilla", "02Unicorn", "03Mallard", "04Turtle", "05Whale", "06Bird", "07Owl", "08Sabertooth",
-              "09Swan", "10Sheep", "11Pig", "12Zalika", "13Pheonix", "14Elephant", "15Parrot", "16Cat", "17Scorpion",
+mad_base_path = "MAD-data/PIAD_dataset/Sim/CL/"
+classnames = ["Axletree", "Box", "Can", "Chain", "Gear", "Keyring", "Motor", "Parts",
+              "Picker", "Section", "", "12Zalika", "13Pheonix", "14Elephant", "15Parrot", "16Cat", "17Scorpion",
               "18Obesobeso", "19Bear", "20Puppy"]
+
+              
 fix_mad_filenames(mad_base_path, classnames)
 
 prepare_pose_dataset = False

@@ -351,7 +351,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
 
-
+    # test cases
     parser.add_argument("--random_init_pcd", action="store_true")
     parser.add_argument("--num_init_points", type=int, default=100000)
     parser.add_argument("--init_radius_scale", type=float, default=1.0)

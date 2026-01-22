@@ -35,7 +35,7 @@ with install_import_hook(
     from factory.anysplat.misc.LocalLogger import LocalLogger
     from factory.anysplat.misc.step_tracker import StepTracker
     from factory.anysplat.misc.wandb_tools import update_checkpoint_path
-    from sfactory.anysplatrc.model.decoder import get_decoder
+    from factory.anysplat.model.decoder import get_decoder
     from factory.anysplat.model.encoder import get_encoder
     from factory.anysplat.model.model_wrapper import ModelWrapper
 

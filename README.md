@@ -108,6 +108,8 @@ Implementation details: We select 10 training images together with all query ima
 
 Regarding the choice of k, under the 20% view setting the Gaussian Splatting reconstruction tends to be blurry. Therefore, a smaller k is used in this case. Based on preliminary experiments only on the 01Gorilla class, the AUROC no longer improves when k exceeds 100. As the result above, k is set to 100 for the 20% views setting, and to 150 for all other settings in the table.
 
+<!-- todo init pcd input for 3dgs mcmc sfm or random -->
+
 
 <!-- pixel-level ROCAUC
 
