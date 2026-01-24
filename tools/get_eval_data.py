@@ -114,6 +114,10 @@ def main():
 
     table = table.round(args.round)
 
+    mean_row = table.mean(axis=0).round(args.round)
+    mean_row.name = "mean"
+    table = pd.concat([table, mean_row.to_frame().T])
+
     # save outputs
     table.to_csv(args.out_csv)
     print(f"Saved CSV: {args.out_csv}")

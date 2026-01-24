@@ -95,14 +95,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description="VGGT Demo")
     parser.add_argument("--scene_dir", type=str, default="data/MAD_Scene", help="Directory containing the scene images")
     parser.add_argument("--post_fix", type=str, default="_vggt_x", help="Post fix for the output folder")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument("--seed", type=int, default=0, help="Random seed for reproducibility")
     parser.add_argument("--use_ga", action="store_true", default=False, help="Whether to apply global alignment for better reconstruction")
     parser.add_argument("--save_depth", action="store_true", default=False, help="If save depth")
     parser.add_argument("--chunk_size", type=int, default=256, help="Chunk size for frame-wise operation in VGGT")
     parser.add_argument("--total_frame_num", type=int, default=None, help="Number of frames to reconstruct")
     ######### GA parameters #########
     parser.add_argument("--max_query_pts", type=int, default=None, help="Maximum number of query points")
-    parser.add_argument("--max_points_for_colmap", type=int, default=500000, help="Maximum number for colmap point cloud")
+    parser.add_argument("--max_points_for_colmap", type=int, default=100000, help="Maximum number for colmap point cloud")
     parser.add_argument("--shared_camera", action="store_true", default=False, help="Use shared camera for all images")
     return parser.parse_args()
 

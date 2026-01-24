@@ -138,7 +138,7 @@ def readColmapCameras(
     resolution=1, 
     train_idx=None, 
     white_background=False,
-    depth_model_type=None,  # 'zoe', 'depthanything', None
+    depth_model_type=None,  # 'zoe', 'depthanything', 'vggt'
     use_predefined_depth=False,
     predefined_depth_path=None,
     confidence_map_output=True,
@@ -149,6 +149,7 @@ def readColmapCameras(
     cam_infos = []
     model_zoe = None
     model_depthanything = None
+    source_depth = None
 
     # Create debug directory if needed
     if debug_output:
@@ -170,6 +171,11 @@ def readColmapCameras(
             model_depthanything = DepthAnythingV2(**model_configs[encoder])
             model_depthanything.load_state_dict(torch.load(DEPTHANYTHING2_CKPT_PATH, map_location='cpu'))
             model_depthanything = model_depthanything.to('cuda').eval()
+        elif depth_model_type == 'vggt':
+            # direct load the image from the path
+            rbg_path = Path(images_folder)
+            project_dir = rbg_path.parent
+            vggt_depth_dir = os.path.join(project_dir, "vggt_depth")
 
     dataset_base_path = os.path.dirname(os.path.dirname(images_folder))
     dataset_name = os.path.basename(os.path.dirname(images_folder))
@@ -213,6 +219,7 @@ def readColmapCameras(
             assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
+        print("\nLoading image:", image_path)
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path).resize((width//1, height//1))
         
@@ -260,7 +267,6 @@ def readColmapCameras(
                 depth_weight = depth_weight/depth_weight.max()
 
                 # Try to load predefined depth if requested
-                source_depth = None
                 if use_predefined_depth and predefined_depth_path:
                     depth_file = os.path.join(predefined_depth_path, f'{image_name}.npy')
                     if os.path.exists(depth_file):
@@ -286,6 +292,30 @@ def readColmapCameras(
                         source_depth = model_depthanything.infer_image(raw_img)
                         if isinstance(source_depth, torch.Tensor):
                             source_depth = source_depth.cpu().numpy()
+                    elif depth_model_type == 'vggt' and vggt_depth_dir:
+                        rgb_name = os.path.basename(extr.name)
+                        rgb_idx = int(rgb_name.split("_")[1].split(".")[0])
+                        depth_file = os.path.join(vggt_depth_dir, f"depth_masked_{rgb_idx:03d}.png")
+                        if not os.path.isfile(depth_file):
+                            raise FileNotFoundError(
+                                f"[VGGT depth] depth file not found: {depth_file}\n"
+                                f"  extr.name = {extr.name}\n"
+                                f"  expected index = {rgb_idx:03d}"
+                            )
+
+                        depth_png = np.array(Image.open(depth_file))
+                        if depth_png.ndim != 2:
+                            raise ValueError(
+                                f"[VGGT depth] Depth PNG must be single-channel, "
+                                f"got shape {depth_png.shape} at {depth_file}"
+                            )
+
+                        if depth_png.dtype == np.uint16:
+                            source_depth = depth_png.astype(np.float32) / 65535.0
+                        elif depth_png.dtype == np.uint8:
+                            source_depth = depth_png.astype(np.float32) / 255.0
+                        else:
+                            source_depth = depth_png.astype(np.float32)
 
                 target=depthmap.copy()
                 target=((target != 0) * 255).astype(np.uint8)
