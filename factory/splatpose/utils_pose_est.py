@@ -408,7 +408,7 @@ def update_config(config):
 
 def rgb_to_gray_torch(x):
     # x: (...,H,W,3) 或 (H,W,3)
-    # 返回 (...,H,W)
+    # return:  (...,H,W)
     r = x[..., 0].to(torch.float32)
     g = x[..., 1].to(torch.float32)
     b = x[..., 2].to(torch.float32)
@@ -462,23 +462,21 @@ def pose_retrieval_loftr_batched(
     imgs,          # (N,H,W,C) CUDA, 0..255
     obs_img,       # (H,W,C) CUDA, 0..255
     batch_size=32,
-    conf_thr=0.0,  # 可以设 0.2/0.5 做更稳的计数
+    conf_thr=0.0,  # 0.2 / 0.5 to obtain more stable counting.
 ):
     """
     Returns:
       max_index: int
     """
-    # --- query gray ---
     q = obs_img
     if q.ndim == 3 and q.shape[-1] == 3:
-        q = rgb_to_gray_torch(q)  # (H,W)
-    q = (q / 255.0).to(dtype=torch.float32)          # 用 float32 稳一点
+        q = rgb_to_gray_torch(q)                     # (H,W)
+    q = (q / 255.0).to(dtype=torch.float32)
     q = q[None, None, ...].contiguous()              # (1,1,H,W)
 
-    # --- gallery gray (一次性转换，避免 N 次灰度开销) ---
     g = imgs
     if g.ndim == 4 and g.shape[-1] == 3:
-        g = rgb_to_gray_torch(g)   # 需要你实现支持 (N,H,W,3)->(N,H,W)
+        g = rgb_to_gray_torch(g)                     # (N,H,W,3)->(N,H,W)
     g = (g / 255.0).to(dtype=torch.float32)
     g = g[:, None, ...].contiguous()                 # (N,1,H,W)
 
@@ -486,7 +484,7 @@ def pose_retrieval_loftr_batched(
     best_score = None
     best_index = None
 
-    # 用 GPU tensor 存所有分数，最后 argmax 只同步一次
+    # Store all scores in GPU tensors, and perform argmax only once at the end to minimize synchronization.
     all_scores = torch.empty((N,), device=g.device, dtype=torch.int32)
 
     for start in range(0, N, batch_size):
@@ -494,17 +492,17 @@ def pose_retrieval_loftr_batched(
         B = end - start
 
         g_batch = g[start:end]                       # (B,1,H,W)
-        q_batch = q.expand(B, -1, -1, -1)            # (B,1,H,W) 视图，不复制
+        q_batch = q.expand(B, -1, -1, -1)            # (B,1,H,W)
 
         batch = {"image0": q_batch, "image1": g_batch}
         matcher(batch)
 
-        # --------- 计算每个样本的匹配数量（GPU 上）---------
-        # 不同 LoFTR 版本可能提供：
-        # - 'b_ids' (每个匹配点属于哪个 batch)
+        # --------- Compute match counts per sample (on GPU) ---------
+        # Different LoFTR versions may provide:
+        # - 'b_ids' (indicating which batch each match belongs to)
         # - 'mkpts0_f' / 'mkpts1_f' + 'mconf' + 'b_ids'
         #
-        # 这里优先用 b_ids 来做 per-sample 计数（最稳）。
+        # Here we prioritize using 'b_ids' for per-sample counting (most robust).
         if "b_ids" in batch:
             b_ids = batch["b_ids"]                   # (M,) long, 0..B-1
             if conf_thr > 0 and "mconf" in batch:
@@ -514,13 +512,16 @@ def pose_retrieval_loftr_batched(
             counts = torch.bincount(b_ids, minlength=B).to(torch.int32)
 
         else:
-            # 退化策略：如果没有 b_ids，就没法严格 per-sample 统计。
-            # 这时建议：
-            # 1) 直接把 batch_size 设为 1（退化回单张）
-            # 或 2) 修改你的 LoFTR 实现，让它输出 b_ids
+            # Fallback strategy: if 'b_ids' is not available, strict per-sample
+            # statistics are not possible.
+            # Options:
+            # 1) Force batch_size = 1 (degenerate to single-image processing), or
+            # 2) Modify your LoFTR implementation to output 'b_ids'.
             #
-            # 为了不 silent-wrong，这里直接退化成 B=1 的逐张计算。
-            # 你也可以 raise Exception 强制你去改 LoFTR 输出。
+            # To avoid silent incorrect behavior, we explicitly fall back to
+            # B = 1 and process samples individually.
+            # Alternatively, you may raise an exception to force updating
+            # the LoFTR outputs.
             for j in range(B):
                 batch1 = {"image0": q, "image1": g[start + j:start + j + 1]}
                 matcher(batch1)
@@ -533,7 +534,6 @@ def pose_retrieval_loftr_batched(
 
         all_scores[start:end] = counts
 
-    # 只同步一次
     max_index = int(torch.argmax(all_scores).item())
     return max_index
 
