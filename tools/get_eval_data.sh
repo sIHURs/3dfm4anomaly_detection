@@ -1,4 +1,4 @@
 python tools/get_eval_data.py \
-  --log_root output/vggt_3dgs_mcmc_180views \
-  --out_csv output/vggt_3dgs_mcmc_180views/rocauc_table.csv \
-  --out_xlsx output/vggt_3dgs_mcmc_180views/rocauc_table.xlsx
+  --log_root output/MAD_Sim_full_views_ad_eval_seed0 \
+  --out_csv output/MAD_Sim_full_views_ad_eval_seed0/rocauc_table.csv \
+  --out_xlsx output/MAD_Sim_full_views_ad_eval_seed0/rocauc_table.xlsx

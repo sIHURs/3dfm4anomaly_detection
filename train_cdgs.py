@@ -117,11 +117,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Depth Loss with confidence map
         depth = render_pkg["depth"]
 
+        print("use depth loss", usedepth)
         if usedepth and viewpoint_cam.original_depth is not None:
             depth_mask = (viewpoint_cam.original_depth>0) # render_pkg["acc"][0]
             gt_maskeddepth = (viewpoint_cam.original_depth * depth_mask).cuda()
 
-            gt_maskeddepth = normalize_depth(gt_maskeddepth)
+            gt_maskeddepth = normalize_depth(gt_maskeddepth) # gt from depthanything
             depth = normalize_depth(depth)
 
             k_scale = 150

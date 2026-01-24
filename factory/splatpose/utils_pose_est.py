@@ -643,10 +643,12 @@ class DefectDataset(Dataset):
                 self.images.append(i_path)
                 self.labels.append(label)
                 if self.set == 'test' and self.get_mask:
-                    extension = '_mask' if sc != 'good' else ''
+                    # extension = '_mask' if sc != 'good' else ''
                     # tmp fix
-                    # extension = ''
-                    mask_path = os.path.join(root, 'ground_truth', sc, p[:-4] + extension + p[-4:])
+                    extension = ''
+                    #tmp
+                    # mask_path = os.path.join(root, 'ground_truth', sc, p[:-4] + extension + p[-4:])
+                    mask_path = os.path.join(root, 'ground_truth', sc, p[:-4] + extension + '.png')
                     self.masks.append(mask_path)
                 elif self.get_mask:
                     self.masks.append(0)
@@ -940,7 +942,8 @@ class ColmapDefectDataset(Dataset):
                 # load masks only for test set
                 if split == "test" and get_mask and label != 0:
                     mask_path = os.path.join(
-                        root, "ground_truth", sub, fname.replace(".png", "_mask.png")
+                        # tmp changes "_mask.png" mask removed
+                        root, "ground_truth", sub, fname.replace(".png", ".png")
                     )
                     self.masks.append(mask_path)
                 elif get_mask:
