@@ -13,7 +13,7 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-from utils_pose_est import DefectDataset, pose_retrieval_loftr, camera_transf, build_loftr, pose_retrieval_loftr_batched, load_pose_lookup
+from utils_pose_est import DefectDataset, pose_retrieval_loftr, camera_transf, build_loftr, pose_retrieval_loftr_batched, load_pose_lookup, camera_transf_PIAD
 
 from torchvision.transforms.functional import to_pil_image
 
@@ -144,6 +144,12 @@ def main_pose_estimation(cur_class,
         pose_start.record()
         c2w_init = torch.from_numpy(c2w_init_np).float().to("cuda")
 
+        # todo
+        # the way how spaltpose and PIAD find coarse pose is the same
+        # cam_transf_PIAD = camera_transf_PIAD().to("cuda")
+        # optimizer = torch.optim.Adam(params=cam_transf.parameters(), lr=0.02, betas=(0.9, 0.999))
+
+
         c2w_init = c2w_init.clone()
         c2w_init[:3, 1:3] *= -1
 
@@ -184,6 +190,8 @@ def main_pose_estimation(cur_class,
         
         init_image = None
         
+        loss_o = torch.tensor(0.0).to('cuda')
+
         for iters in range(k):
             optimizer.zero_grad()
             
@@ -241,6 +249,15 @@ def main_pose_estimation(cur_class,
                 normal_images.append(set_entry[0].cpu().detach())
                 reference_images.append(rendering.cpu().detach())
 
+            # if abs(loss-loss_o) < 3e-6:
+            #             #print('Break!!!')
+            #             #print('Step: ', k)
+            #             #print('Loss: ',loss)
+            #             break
+                    
+
+            # loss_o = loss.clone()
+
         pose_end.record()
         loftr_end.record()
         torch.cuda.synchronize()
@@ -250,4 +267,5 @@ def main_pose_estimation(cur_class,
     assert len(normal_images) == len(reference_images) == len(testset), f"Wrongly sized sets!" \
                                                                          f"{len(normal_images)}. {len(reference_images)}. {len(testset)}"
     assert len(normal_images) == len(gt_masks), f"Wrongly sized sets! {len(normal_images)}. {len(gt_masks)}"
+
     return normal_images, reference_images, all_labels, gt_masks, pose_times, loftr_times, filenames

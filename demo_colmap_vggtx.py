@@ -11,6 +11,9 @@ import os
 import torch
 import torch.nn.functional as F
 import shutil
+import math
+import json
+import cv2
 
 # disable triton if arch not support
 def is_pascal():
@@ -55,6 +58,8 @@ import utils.colmap as colmap_utils
 from tqdm import tqdm
 from pathlib import Path
 from datetime import datetime
+now = datetime.now()
+from utils.time_recorder import SpanTimer
 from factory.vggtx.utils.metric_torch import evaluate_auc, evaluate_pcd, write_evaluation_results
 
 from factory.vggtx.vggt.models.vggt import VGGT
@@ -67,22 +72,246 @@ from factory.vggtx.vggt.dependency.np_to_pycolmap import batch_np_matrix_to_pyco
 
 torch._dynamo.config.accumulated_cache_size_limit = 512
 
+''' help functions @yifan '''
 
-def run_VGGT(images, device, dtype, chunk_size):
+def save_vggt_json_w2c(
+    extrinsic,
+    intrinsic,
+    out_path="vggt_extrinsic_intrinsic_w2c.json",
+):
+    extrinsic = np.asarray(extrinsic)
+    intrinsic = np.asarray(intrinsic)
+
+    if intrinsic.ndim == 2:
+        intrinsic = intrinsic[None].repeat(extrinsic.shape[0], axis=0)
+
+    frames = []
+    for i in range(extrinsic.shape[0]):
+        frames.append({
+            "frame_id": int(i),
+            "extrinsic_w2c": extrinsic[i].tolist(),
+            "intrinsic": intrinsic[i].tolist(),
+        })
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    with open(out_path, "w") as f:
+        json.dump(frames, f, indent=2)
+
+    # print(f"[OK][{now}] wrote {out_path}")
+
+def save_depth_outputs(depth_map, depth_conf, out_dir, prefix="vggt"):
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Tensor → CPU → NumPy
+    if torch.is_tensor(depth_map):
+        depth_map = depth_map.detach().cpu().numpy()
+    if torch.is_tensor(depth_conf):
+        depth_conf = depth_conf.detach().cpu().numpy()
+
+    np.save(os.path.join(out_dir, "verbose", f"{prefix}_depth.npy"), depth_map)
+    np.save(os.path.join(out_dir, "verbose", f"{prefix}_depth_conf.npy"), depth_conf)
+
+    print(f"[OK][{now}] Saved depth_map and depth_conf to {out_dir}")
+
+def save_depth_png(depth, path, vmin=None, vmax=None):
+    depth = depth.astype(np.float32)
+
+    if vmin is None:
+        vmin = np.percentile(depth, 2)
+    if vmax is None:
+        vmax = np.percentile(depth, 98)
+
+    depth_norm = (depth - vmin) / (vmax - vmin + 1e-6)
+    depth_norm = np.clip(depth_norm, 0, 1)
+
+    depth_uint8 = (depth_norm * 255).astype(np.uint8)
+    cv2.imwrite(path, depth_uint8)
+
+def restructure_scene_dir(scene_dir: str):
+    print(f"[INFO] Restructuring scene dir: {scene_dir}")
+
+    # 1) images -> input
+    src_images = os.path.join(scene_dir, "images")
+    dst_input  = os.path.join(scene_dir, "input")
+
+    if os.path.exists(src_images):
+        if os.path.exists(dst_input):
+            print(f"[SKIP] '{dst_input}' already exists, keep it.")
+        else:
+            shutil.move(src_images, dst_input)
+            print(f"[OK] Moved 'images' -> 'input'")
+    else:
+        print(f"[SKIP] No 'images' directory found.")
+
+    # 2) sparse/0 -> distorted/sparse/0
+    src_sparse0 = os.path.join(scene_dir, "sparse", "0")
+    dst_sparse_parent = os.path.join(scene_dir, "distorted", "sparse")
+    dst_sparse0 = os.path.join(dst_sparse_parent, "0")
+
+    if os.path.exists(src_sparse0):
+        if os.path.exists(dst_sparse0):
+            print(f"[SKIP] '{dst_sparse0}' already exists, keep it.")
+        else:
+            os.makedirs(dst_sparse_parent, exist_ok=True)
+            shutil.move(src_sparse0, dst_sparse_parent)  # move folder "0"
+            print(f"[OK] Moved 'sparse/0' -> 'distorted/sparse/0'")
+    else:
+        print(f"[SKIP] No 'sparse/0' directory found.")
+
+    # 3) remove old sparse if empty
+    src_sparse_root = os.path.join(scene_dir, "sparse")
+    if os.path.exists(src_sparse_root):
+        remaining = os.listdir(src_sparse_root)
+        if len(remaining) == 0:
+            shutil.rmtree(src_sparse_root)
+            print(f"[OK] Removed empty 'sparse' directory")
+        else:
+            print(f"[WARN] 'sparse' not empty, keeping it: {remaining}")
+    else:
+        print(f"[SKIP] No 'sparse' directory found.")
+
+    print(f"[DONE] Folder structure updated.\n")
+    
+
+def opencv_to_opengl(T_c2w: np.ndarray) -> np.ndarray:
+    # OpenCV camera coords -> OpenGL/Blender (flip y/z)
+    fix = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float64)
+    return T_c2w @ fix
+
+
+def write_transforms_json_from_vggt(
+    extrinsic_w2c: np.ndarray,   # (N,4,4) or (N,3,4)
+    intrinsic: np.ndarray,       # (N,3,3) or (3,3)
+    image_paths: list,           # length N, full paths (recommended)
+    original_coords: np.ndarray, # (N,4) typically [top_left_x, top_left_y, W, H]
+    img_size: int,               # vggt resolution (518)
+    out_path: str,
+):
+    extrinsic_w2c = np.asarray(extrinsic_w2c)
+    intrinsic = np.asarray(intrinsic)
+
+    # normalize extrinsic to (N,4,4)
+    if extrinsic_w2c.ndim == 3 and extrinsic_w2c.shape[1:] == (3, 4):
+        N = extrinsic_w2c.shape[0]
+        tmp = np.zeros((N, 4, 4), dtype=np.float64)
+        tmp[:, :3, :4] = extrinsic_w2c
+        tmp[:, 3, 3] = 1.0
+        extrinsic_w2c = tmp
+    elif extrinsic_w2c.ndim == 3 and extrinsic_w2c.shape[1:] == (4, 4):
+        pass
+    else:
+        raise ValueError(f"Unsupported extrinsic shape: {extrinsic_w2c.shape}")
+
+    N = extrinsic_w2c.shape[0]
+    if intrinsic.ndim == 2:
+        intrinsic = np.repeat(intrinsic[None, ...], N, axis=0)
+    elif intrinsic.ndim == 3 and intrinsic.shape[0] == N:
+        pass
+    else:
+        raise ValueError(f"Unsupported intrinsic shape: {intrinsic.shape}")
+
+    if len(image_paths) != N:
+        raise ValueError(f"len(image_paths)={len(image_paths)} != N={N}")
+    if original_coords.shape[0] != N:
+        raise ValueError(f"original_coords has {original_coords.shape[0]} entries but N={N}")
+
+    frames = []
+
+    # compute camera_angle_x using first frame after rescale-to-original
+    real_wh0 = original_coords[0, -2:].astype(np.float64)  # (W,H)
+    resize_ratio0 = max(real_wh0) / float(img_size)
+
+    K0 = intrinsic[0].astype(np.float64).copy()
+    K0[:2, :] *= resize_ratio0
+    K0[0, 2] = real_wh0[0] / 2.0
+    K0[1, 2] = real_wh0[1] / 2.0
+    fx0 = float(K0[0, 0])
+    camera_angle_x = 2.0 * math.atan(float(real_wh0[0]) / (2.0 * fx0))
+
+    for i in range(N):
+        w2c = extrinsic_w2c[i].astype(np.float64)
+        c2w = np.linalg.inv(w2c)
+        c2w = opencv_to_opengl(c2w)
+
+        real_wh = original_coords[i, -2:].astype(np.float64)  # (W,H)
+        resize_ratio = max(real_wh) / float(img_size)
+
+        K = intrinsic[i].astype(np.float64).copy()
+        K[:2, :] *= resize_ratio
+        K[0, 2] = real_wh[0] / 2.0
+        K[1, 2] = real_wh[1] / 2.0
+
+        file_path = image_paths[i].replace("\\", "/")
+
+        frames.append({
+            "file_path": file_path,
+            "transform_matrix": c2w.tolist(),
+            "fl_x": float(K[0, 0]), "fl_y": float(K[1, 1]),
+            "cx": float(K[0, 2]), "cy": float(K[1, 2]),
+            "w": int(real_wh[0]), "h": int(real_wh[1]),
+            "camera_model": "PINHOLE",
+        })
+
+    transforms = {
+        "camera_angle_x": float(camera_angle_x),
+        "frames": frames,
+    }
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(transforms, f, indent=2)
+    # print(f"[OK][{now}] wrote transforms.json: {out_path}  (#frames={N})")
+
+
+# -------------------------
+# Packing utilities
+# -------------------------
+def list_images_sorted(folder: str):
+    exts = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+    paths = []
+    for p in glob.glob(os.path.join(folder, "*")):
+        if os.path.splitext(p.lower())[1] in exts:
+            paths.append(p)
+    paths.sort()
+    return paths
+
+
+def safe_stem(p: str) -> str:
+    s = Path(p).stem
+    # avoid crazy chars in filename
+    return "".join([c if c.isalnum() or c in ("-", "_") else "_" for c in s])
+
+def to_4x4(extri):
+    extri = np.asarray(extri)
+    if extri.ndim == 3 and extri.shape[1:] == (3, 4):
+        N = extri.shape[0]
+        T = np.zeros((N, 4, 4), dtype=np.float64)
+        T[:, :3, :4] = extri
+        T[:, 3, 3] = 1.0
+        return T
+    return extri.astype(np.float64)
+
+
+
+def run_VGGT(images, device, dtype, chunk_size, tm=None):
     # images: [B, 3, H, W]
 
     # Run VGGT for camera and depth estimation
+    tm.mark("before_load_images")
     model = VGGT(chunk_size=chunk_size)
     _URL = "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
     os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
     model.load_state_dict(torch.hub.load_state_dict_from_url(_URL))
     model.eval()
     model = model.to(device).to(dtype)
+    tm.mark("after_load_images")
     model.track_head = None  # we do not need tracking head for reconstruction
     print(f"Model loaded")
 
     with torch.no_grad():
+        tm.mark("before_run_vggt")
         predictions = model(images.to(device, dtype), verbose=True)
+        tm.mark("after_run_vggt")
         extrinsic, intrinsic = pose_encoding_to_extri_intri(predictions['pose_enc'], images.shape[-2:])
         extrinsic = extrinsic.squeeze(0).cpu().numpy()
         intrinsic = intrinsic.squeeze(0).cpu().numpy()
@@ -95,15 +324,20 @@ def parse_args():
     parser = argparse.ArgumentParser(description="VGGT Demo")
     parser.add_argument("--scene_dir", type=str, default="data/MAD_Scene", help="Directory containing the scene images")
     parser.add_argument("--post_fix", type=str, default="_vggt_x", help="Post fix for the output folder")
-    parser.add_argument("--seed", type=int, default=0, help="Random seed for reproducibility")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--use_ga", action="store_true", default=False, help="Whether to apply global alignment for better reconstruction")
     parser.add_argument("--save_depth", action="store_true", default=False, help="If save depth")
     parser.add_argument("--chunk_size", type=int, default=256, help="Chunk size for frame-wise operation in VGGT")
     parser.add_argument("--total_frame_num", type=int, default=None, help="Number of frames to reconstruct")
     ######### GA parameters #########
     parser.add_argument("--max_query_pts", type=int, default=None, help="Maximum number of query points")
-    parser.add_argument("--max_points_for_colmap", type=int, default=100000, help="Maximum number for colmap point cloud")
+    parser.add_argument("--max_points_for_colmap", type=int, default=100000, help="Maximum number for colmap point cloud") # the default from vggtx is 500000
     parser.add_argument("--shared_camera", action="store_true", default=False, help="Use shared camera for all images")
+    
+    # todo: for sparse view experiments
+    parser.add_argument("--eval_dir", help="dir that contains burrs/good/missing/stains")
+    parser.add_argument("--test_sparse_view", action="store_true", default=False, help="test with sparse view input")
+    parser.add_argument("--query_batch_size", type=int, default=1, help="test with sparse view input")
     return parser.parse_args()
 
 def demo_fn(args):
@@ -112,7 +346,10 @@ def demo_fn(args):
 
     # target_scene_dir = os.path.join(f"{os.path.dirname(args.scene_dir)}{args.post_fix}", os.path.basename(args.scene_dir))
     # os.makedirs(target_scene_dir, exist_ok=True)
-    target_scene_dir = args.scene_dir
+    target_scene_dir = os.path.join(args.scene_dir)
+
+    # # set time recorder
+    tm = SpanTimer()
 
     # Set seed for reproducibility
     np.random.seed(args.seed)
@@ -165,18 +402,22 @@ def demo_fn(args):
     print(f"Loaded {len(images)} images from {image_dir}")
 
     torch.cuda.reset_peak_memory_stats()
-    start_time = datetime.now()
 
     # Run VGGT to estimate camera and depth
     # Run with 518x518 images
-    extrinsic, intrinsic, depth_map, depth_conf = run_VGGT(images, device, dtype, args.chunk_size)
+    extrinsic, intrinsic, depth_map, depth_conf = run_VGGT(images, device, dtype, args.chunk_size, tm)
     
     images = images.to(device)
     
     if args.use_ga:
+        tm.mark("before_ga")
         if os.path.exists(os.path.join(target_scene_dir, "matches.pt")):
             print(f"Found existing matches at {os.path.join(target_scene_dir, 'matches.pt')}, loading it")
-            match_outputs = torch.load(os.path.join(target_scene_dir, "matches.pt"))
+            match_outputs = torch.load(
+                os.path.join(target_scene_dir, "matches.pt"),
+                map_location="cpu",
+                weights_only=False,
+            )
         else:
             print("Extracting matches for global alignment")
             if args.max_query_pts is None:
@@ -190,11 +431,10 @@ def demo_fn(args):
             match_outputs, extrinsic, intrinsic, images, depth_map, depth_conf,
             base_image_path_list, target_scene_dir=target_scene_dir, shared_intrinsics=args.shared_camera,
         )
-        
-    end_time = datetime.now()
-    peak_mem_mb = (torch.cuda.max_memory_allocated() / (1024 ** 2)) if torch.cuda.is_available() else 0.0
+        tm.mark("after_ga")
 
-    conf_thres_value = np.percentile(depth_conf, 0.5)
+    # conf_thres_value = np.percentile(depth_conf, 0.5)
+    conf_thres_value = 5.0
     print(f"Using confidence threshold: {conf_thres_value}")
     shared_camera = False  # in colmap result saving, we do not support shared camera
     camera_type = "PINHOLE"  # in colmap result saving, we only support PINHOLE camera
@@ -203,65 +443,105 @@ def demo_fn(args):
     extrinsic[:, :3, 3] *= c
     depth_map *= c
 
-    if os.path.exists(os.path.join(args.scene_dir, "sparse/0/points3D.bin")):
-        print("Found ground truth colmap results, evaluating reconstruction quality")
-        pcd_gt = colmap_utils.read_points3D_binary(os.path.join(args.scene_dir, "sparse/0/points3D.bin"))
+    points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
 
-        if images_gt_updated is not None:
+    print(f"[OK][{now}] train poses computed: {extrinsic.shape[0]} images")
+    out_name = f"transforms_anomaly_free_poses_uncentered.json"
+    out_path = os.path.join(target_scene_dir, out_name)
+    write_transforms_json_from_vggt(
+        extrinsic_w2c=extrinsic,
+        intrinsic=intrinsic,
+        image_paths=base_image_path_list,
+        original_coords=original_coords.cpu().numpy() if torch.is_tensor(original_coords) else original_coords,
+        img_size=img_load_resolution,
+        out_path=out_path,
+    )
 
-            translation_gt = torch.tensor([image.tvec for image in images_gt_updated.values()], device=device)
-            rotation_gt = torch.tensor([colmap_utils.qvec2rotmat(image.qvec) for image in images_gt_updated.values()], device=device)
+    if args.test_sparse_view:
+        tm.mark("before_find_query_poses")
+        print(f"TESTING SPARSE VIEW INPUT")
+        print(f"[OK][{now}] Preparing query images from {args.eval_dir}")
 
-            # gt w2c
-            gt_se3 = torch.eye(4, device=device).unsqueeze(0).repeat(len(images_gt_updated), 1, 1)
-            gt_se3[:, :3, :3] = rotation_gt
-            gt_se3[:, 3, :3] = translation_gt
+        subsets = ["Burrs", "good", "Missing", "Stains"]
+        all_queries = []
+        for s in subsets:
+            d = os.path.join(args.eval_dir, s)
+            if os.path.isdir(d):
+                q = list_images_sorted(d)
+                all_queries += [(s, p) for p in q]
 
-            # pred w2c
-            pred_se3 = torch.eye(4, device=device).unsqueeze(0).repeat(len(images_gt_updated), 1, 1)
-            pred_se3[:, :3, :3] = torch.tensor(extrinsic[:, :3, :3], device=device)
-            pred_se3[:, 3, :3] = torch.tensor(extrinsic[:, :3, 3], device=device)
-
-            auc_results, pred_se3_aligned, c, R, t = evaluate_auc(pred_se3, gt_se3, device, return_aligned=True)
-
-            # align prediction to gt points
-            # extrinsic[:, :3, :3] = pred_se3_aligned[:, :3, :3].cpu().numpy()
-            # extrinsic[:, :3, 3] = pred_se3_aligned[:, 3, :3].cpu().numpy()
-            # depth_map *= c
-            
-            points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
-
-            # align gt points to prediction
-            points_3d_transformed = c * (points_3d @ R.T) + t.T
-            # points_3d_transformed = points_3d
-            
-            pcd_results = evaluate_pcd(
-                pcd_gt, points_3d_transformed, depth_conf, images,
-                images_gt_updated, original_coords, 
-                img_load_resolution, conf_thresh=1.5 if depth_conf.max() > 1.5 else conf_thres_value,
+        if not all_queries:
+            raise RuntimeError(
+                f"No query images found under {args.eval_dir}/{{burrs,good,missing,stains}}"
             )
+        print(f"[OK][{now}] total queries: {len(all_queries)}")
 
-            write_evaluation_results(target_scene_dir, len(images_gt_updated), auc_results, pcd_results, 
-                                     (end_time - start_time).total_seconds(), peak_mem_mb)
-            
-    else:
-        print("No ground truth points3D.bin found, using random sampling")
-        points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
+        # ------------------------------------------------------------
+        # 1) Keep only first 10 train images (and aligned metadata)
+        # ------------------------------------------------------------
+        keep_train = 10
+        images_10 = images[:keep_train]  # torch tensor (T, C, H, W)
+        original_coords_10 = original_coords[:keep_train]  # numpy or tensor
+        image_path_list_10 = image_path_list[:keep_train]  # list[str]
+
+        # ------------------------------------------------------------
+        # 2) Load ALL query images once
+        # ------------------------------------------------------------
+        qpaths_all = [p for (_, p) in all_queries]
+        q_imgs, q_coords_t = load_and_preprocess_images_ratio(qpaths_all, img_load_resolution)
+        q_coords = q_coords_t.cpu().numpy() if torch.is_tensor(q_coords_t) else q_coords_t
+
+        # ------------------------------------------------------------
+        # 3) Pack: 10 train + ALL queries, run VGGT ONCE
+        # ------------------------------------------------------------
+        packed_imgs = torch.cat([images_10, q_imgs], dim=0)
+        packed_coords = np.concatenate([original_coords_10, q_coords], axis=0)
+        packed_paths = image_path_list_10 + qpaths_all
+        packed_paths_name = [os.path.basename(p) for p in packed_paths]
+
+        print(f"[OK][{now}] Packed {len(image_path_list_10)} train + {len(qpaths_all)} query = {len(packed_paths)} total frames")
+
+        extri, intri, _, _ = run_VGGT(packed_imgs, device, dtype, img_load_resolution, tm)
+
+        out_path = os.path.join(target_scene_dir, "transforms_query_poses_uncentered.json")
+        write_transforms_json_from_vggt(
+            extrinsic_w2c=extri,
+            intrinsic=intri,
+            image_paths=packed_paths_name,
+            original_coords=packed_coords,
+            img_size=img_load_resolution,
+            out_path=out_path,
+        )
+
+        print(f"[DONE][{now}] all queries processed")
+        tm.mark("after_find_query_poses")
 
     if args.save_depth:
-        # save depth_map and depth_conf as .npy files
-        target_depth_dir = os.path.join(target_scene_dir, "estimated_depths")
-        target_conf_dir = os.path.join(target_scene_dir, "estimated_confs")
-        os.makedirs(target_depth_dir, exist_ok=True)
-        os.makedirs(target_conf_dir, exist_ok=True)
+        os.makedirs(target_scene_dir, exist_ok=True)
+        depth_map_dir = os.path.join(target_scene_dir, "verbose", "depth_map")
+        depth_conf_dir = os.path.join(target_scene_dir, "verbose", "depth_conf_map")
+        os.makedirs(depth_map_dir, exist_ok=True)
+        os.makedirs(depth_conf_dir, exist_ok=True)
+        
+        save_depth_outputs(depth_map, depth_conf, out_dir=target_scene_dir, prefix="vggt")
 
-        for idx, image_path in tqdm(enumerate(image_path_list), desc="Saving depth maps and confidences"):
-            inverse_depth_map = 1 / (depth_map[idx] + 1e-8)  # Avoid division by zero
-            normalized_inverse_depth_map = (inverse_depth_map - inverse_depth_map.min()) / (inverse_depth_map.max() - inverse_depth_map.min())
-            depth_map_path = os.path.join(target_depth_dir, f"{os.path.basename(image_path)}.npy")
-            depth_conf_path = os.path.join(target_conf_dir, f"{os.path.basename(image_path)}.npy")
-            np.save(depth_map_path, normalized_inverse_depth_map.squeeze())
-            np.save(depth_conf_path, depth_conf[idx].squeeze())
+        for i in range(depth_map.shape[0]):
+            # save depth map
+            save_depth_png(
+                depth_map[i],
+                os.path.join(target_scene_dir, "verbose", "depth_map", f"depth_{i:03d}.png")
+            )
+            # save depth confidence map
+            c = depth_conf[i]
+            c_np = c.detach().float().cpu().numpy() if torch.is_tensor(c) else c.astype(np.float32)
+            vmin = np.percentile(c_np, 5)
+            vmax = np.percentile(c_np, 95)
+            save_depth_png(
+                c_np,
+                os.path.join(target_scene_dir, "verbose", "depth_conf_map", f"depth_conf_{i:03d}.png"),
+                vmin=vmin,
+                vmax=vmax
+            )
 
     image_size = np.array([depth_map.shape[1], depth_map.shape[2]])
     num_frames, height, width, _ = points_3d.shape
@@ -331,70 +611,28 @@ def demo_fn(args):
     reconstruction.write(sparse_reconstruction_dir)
 
     # Save point cloud for fast visualization
-    trimesh.PointCloud(points_3d, colors=points_rgb).export(os.path.join(target_scene_dir, "sparse/points.ply"))
+    trimesh.PointCloud(points_3d, colors=points_rgb).export(os.path.join(target_scene_dir, "sparse/0/points.ply"))
+
+    # restructure_scene_dir(target_scene_dir)
+
+    # print time recorder results
+    wall_s, cuda_s = tm.span("before_load_images", "after_load_images")
+    print(f"[Duration Recorder] load vggt: "f"wall={wall_s:.3f}s | "f"cuda={cuda_s:.3f}s")
+    wall_s, cuda_s = tm.span("before_run_vggt", "after_run_vggt")
+    print(f"[Duration Recorder] run vggt: "f"wall={wall_s:.3f}s | "f"cuda={cuda_s:.3f}s")
+    if args.test_sparse_view:
+        wall_s, cuda_s = tm.span("before_find_query_poses", "after_find_query_poses")
+        print(f"find query poses: "f"wall={wall_s:.3f}s | "f"cuda={cuda_s:.3f}s")
+    wall_s, cuda_s = tm.span("before_ga", "after_ga")
+    print(f"[Duration Recorder] ga duration: "f"wall={wall_s:.3f}s | "f"cuda={cuda_s:.3f}s")
 
     return True
 
-def restructure_scene_dir(args):
-    """
-    Original folder structure:
-      scene_dir/
-        images/
-        sparse/
-          0/
-            images.bin
-            cameras.bin
-            points3D.bin
-
-    Target folder structure:
-      scene_dir/
-        input/
-        distorted/
-          sparse/
-            0/
-              images.bin
-              cameras.bin
-              points3D.bin
-    """
-    scene_dir = args.scene_dir
-    images_dir = os.path.join(scene_dir, "images")
-    sparse_dir = os.path.join(scene_dir, "sparse", "0")
-
-    # Target paths
-    input_dir = os.path.join(scene_dir, "input")
-    new_sparse_dir = os.path.join(scene_dir, "distorted", "sparse", "0")
-    os.makedirs(new_sparse_dir, exist_ok=True)
-
-    # 1️⃣ Rename "images" to "input"
-    if os.path.exists(images_dir):
-        if os.path.exists(input_dir):
-            print(f"⚠️ Target directory already exists: {input_dir}, skipping rename.")
-        else:
-            shutil.move(images_dir, input_dir)
-            print(f"✅ Renamed 'images' to 'input'")
-
-    # 2️⃣ Move files from "sparse/0" to "distorted/sparse/0"
-    if os.path.exists(sparse_dir):
-        for file_name in os.listdir(sparse_dir):
-            src = os.path.join(sparse_dir, file_name)
-            dst = os.path.join(new_sparse_dir, file_name)
-            if os.path.isfile(src):
-                shutil.move(src, dst)
-        print(f"✅ Moved contents of 'sparse/0' to {new_sparse_dir}")
-
-    # 3️⃣ Delete the old "sparse" directory
-    old_sparse_root = os.path.join(scene_dir, "sparse")
-    if os.path.exists(old_sparse_root):
-        shutil.rmtree(old_sparse_root)
-        print(f"🗑️ Removed old 'sparse' folder")
-
-    print(f"🎯 Folder structure successfully adjusted: {scene_dir}")
 
 
 if __name__ == "__main__":
     args = parse_args()
     demo_fn(args)
-    restructure_scene_dir(args)
 
 
 # Work in Progress (WIP)
