@@ -55,7 +55,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="VGGT Demo")
     parser.add_argument("--scene_dir", type=str, required=True, help="Directory containing the scene images")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory to save the output reconstruction")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument("--seed", type=int, default=0, help="Random seed for reproducibility")
     parser.add_argument("--max_points", type=int, default=100000, help="Number of predicted points for colmap")
     parser.add_argument("--use_ba", action="store_true", default=False, help="Use BA for reconstruction")
     ######### BA parameters #########
@@ -134,7 +134,7 @@ def save_depth_outputs(depth_map, depth_conf, out_dir, prefix="vggt"):
     np.save(os.path.join(out_dir, "verbose", f"{prefix}_depth.npy"), depth_map)
     np.save(os.path.join(out_dir, "verbose", f"{prefix}_depth_conf.npy"), depth_conf)
 
-    print(f"[OK][{now}] Saved depth_map and depth_conf to {out_dir}")
+    print(f"[OK][{now}] Saved {prefix} depth_map and depth_conf to {out_dir}")
 
 def save_depth_png(depth, path, vmin=None, vmax=None):
     depth = depth.astype(np.float32)
@@ -705,7 +705,7 @@ def demo_fn(args):
 
         print(f"[OK][{now}] Packed {len(image_path_list_10)} train + {len(qpaths_all)} query = {len(packed_paths)} total frames")
 
-        extri, intri, _, _ = run_VGGT(model, packed_imgs, device, dtype, vggt_fixed_resolution)
+        extri, intri, depth_map_query, depth_conf_query = run_VGGT(model, packed_imgs, device, dtype, vggt_fixed_resolution)
 
         out_path = os.path.join(args.output_dir, "transforms_query_poses_uncentered.json")
         write_transforms_json_from_vggt(
@@ -719,6 +719,64 @@ def demo_fn(args):
 
         print(f"[DONE][{now}] all queries processed")
         tm.mark("after_find_query_poses")
+
+        if args.save_depth:
+            os.makedirs(args.output_dir, exist_ok=True)
+            depth_map_dir = os.path.join(args.output_dir, "verbose", "depth_map_query")
+            depth_conf_dir = os.path.join(args.output_dir, "verbose", "depth_conf_map_query")
+            os.makedirs(depth_map_dir, exist_ok=True)
+            os.makedirs(depth_conf_dir, exist_ok=True)
+            
+            save_depth_outputs(depth_map_query, depth_conf_query, out_dir=args.output_dir, prefix="vggt_query")
+
+            for i in range(depth_map_query.shape[0]):
+                import matplotlib.pyplot as plt
+
+                base_name = os.path.splitext(packed_paths_name[i])[0]
+
+                save_depth_png(
+                    depth_map_query[i],
+                    os.path.join(
+                        args.output_dir,
+                        "verbose",
+                        "depth_map_query",
+                        f"depth_{base_name}.png",
+                    )
+                )
+
+                c = depth_conf_query[i]
+                c_np = (
+                    c.detach().float().cpu().numpy()
+                    if torch.is_tensor(c)
+                    else c.astype(np.float32)
+                )
+
+                # percentile for robust visualization
+                vmin = np.percentile(c_np, 5)
+                vmax = np.percentile(c_np, 95)
+
+                # 1) clip
+                c_clip = np.clip(c_np, vmin, vmax)
+
+                # 2) normalize to [0,255]
+                c_norm = (c_clip - vmin) / (vmax - vmin + 1e-6)
+                c_uint8 = (c_norm * 255).astype(np.uint8)
+
+                # 3) apply colormap (JET / TURBO / INFERNO 都可以)
+                conf_heatmap = cv2.applyColorMap(c_uint8, cv2.COLORMAP_TURBO)
+                # alternatives:
+                # cv2.COLORMAP_JET
+                # cv2.COLORMAP_INFERNO
+                # cv2.COLORMAP_VIRIDIS
+
+                # 4) save (BGR already)
+                out_path = os.path.join(
+                    args.output_dir,
+                    "verbose",
+                    "depth_conf_map_query",
+                    f"depth_conf_query_heatmap_{base_name}.png",
+                )
+                cv2.imwrite(out_path, conf_heatmap)
 
     if args.save_depth:
         os.makedirs(args.output_dir, exist_ok=True)
@@ -945,13 +1003,13 @@ def demo_fn(args):
         shared_camera=shared_camera,
     )
 
-    print(f"Saving reconstruction to {args.output_dir}/sparse")
-    sparse_reconstruction_dir = os.path.join(args.output_dir, "sparse")
+    print(f"Saving reconstruction to {args.output_dir}/sparse/0")
+    sparse_reconstruction_dir = os.path.join(args.output_dir, "sparse/0")
     os.makedirs(sparse_reconstruction_dir, exist_ok=True)
     reconstruction.write(sparse_reconstruction_dir)
 
     # Save point cloud for fast visualization
-    trimesh.PointCloud(points_3d, colors=points_rgb).export(os.path.join(args.output_dir, "sparse/points.ply"))
+    trimesh.PointCloud(points_3d, colors=points_rgb).export(os.path.join(args.output_dir, "sparse/0/points.ply"))
 
 
     # print time recorder results
