@@ -210,6 +210,37 @@ class camera_transf(nn.Module):
             self.v.normal_(0.0, std)
             self.theta.normal_(0.0, std)
 
+class camera_transf_PIAD(nn.Module):
+    def __init__(self):
+        super(camera_transf_PIAD, self).__init__()
+        self.w = nn.Parameter(torch.normal(0., 1e-6, size=(3,)))
+        self.v = nn.Parameter(torch.normal(0., 1e-6, size=(3,)))
+        self.theta = nn.Parameter(torch.normal(0., 1e-6, size=()))
+        """if w == 0:
+            self.w = nn.Parameter(torch.normal(0., 1e-6, size=(3,)),requires_grad=True)
+        else:
+            self.w = w
+        if w == 0:
+            self.v = nn.Parameter(torch.normal(0., 1e-6, size=(3,)),requires_grad=True)
+        else:
+            self.v = v
+        if w == 0:
+            self.theta = nn.Parameter(torch.normal(0., 1e-6, size=()),requires_grad=True)
+        else:
+            self.theta = theta"""
+
+    def forward(self, x):
+        exp_i = torch.zeros((4,4))
+        w_skewsym = vec2ss_matrix(self.w)
+        v_skewsym = vec2ss_matrix(self.v)
+        exp_i[:3, :3] = torch.eye(3) + torch.sin(self.theta) * w_skewsym + (1 - torch.cos(self.theta)) * torch.matmul(w_skewsym, w_skewsym)
+        exp_i[:3, 3] = torch.matmul(torch.eye(3) * self.theta + (1 - torch.cos(self.theta)) * w_skewsym + (self.theta - torch.sin(self.theta)) * torch.matmul(w_skewsym, w_skewsym), self.v)
+        exp_i[3, 3] = 1.
+        # import pdb;pdb.set_trace()
+        T_i = torch.matmul(exp_i, x)
+        return T_i
+
+
 
 backbone_info = {
     "resnet18": {
@@ -643,12 +674,12 @@ class DefectDataset(Dataset):
                 self.images.append(i_path)
                 self.labels.append(label)
                 if self.set == 'test' and self.get_mask:
-                    # extension = '_mask' if sc != 'good' else ''
+                    extension = '_mask' if sc != 'good' else ''
                     # tmp fix
-                    extension = ''
+                    # extension = ''
                     #tmp
-                    # mask_path = os.path.join(root, 'ground_truth', sc, p[:-4] + extension + p[-4:])
-                    mask_path = os.path.join(root, 'ground_truth', sc, p[:-4] + extension + '.png')
+                    mask_path = os.path.join(root, 'ground_truth', sc, p[:-4] + extension + p[-4:])
+                    # mask_path = os.path.join(root, 'ground_truth', sc, p[:-4] + extension + '.png')
                     self.masks.append(mask_path)
                 elif self.get_mask:
                     self.masks.append(0)
