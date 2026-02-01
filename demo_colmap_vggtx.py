@@ -127,6 +127,237 @@ def save_depth_png(depth, path, vmin=None, vmax=None):
     depth_uint8 = (depth_norm * 255).astype(np.uint8)
     cv2.imwrite(path, depth_uint8)
 
+def topk_points_from_conf(c_np, k=3):
+    H, W = c_np.shape
+    flat = c_np.reshape(-1)
+
+    # Top-K indices (descending)
+    idx = np.argpartition(-flat, k)[:k]
+    idx = idx[np.argsort(-flat[idx])]  # sort by value
+
+    ys, xs = np.unravel_index(idx, (H, W))
+    scores = flat[idx]
+
+    return list(zip(xs, ys, scores))
+
+
+def _apply_nms_mask(c: np.ndarray, x: int, y: int, min_dist: int,
+                    shape: str = "square", value: float = 0.0) -> None:
+    """
+    Apply a non-circular NMS suppression mask centered at (x, y).
+    shape: "square" | "diamond" | "cross"
+    """
+    h, w = c.shape
+    r = int(min_dist)
+
+    y0 = max(0, y - r)
+    y1 = min(h, y + r + 1)
+    x0 = max(0, x - r)
+    x1 = min(w, x + r + 1)
+
+    if shape == "square":
+        c[y0:y1, x0:x1] = value
+
+    elif shape == "diamond":
+        # |dx| + |dy| <= r
+        for yy in range(y0, y1):
+            dy = abs(yy - y)
+            rem = r - dy
+            if rem < 0:
+                continue
+            xx0 = max(x0, x - rem)
+            xx1 = min(x1, x + rem + 1)
+            c[yy, xx0:xx1] = value
+
+    elif shape == "cross":
+        # Horizontal + vertical lines with radius r
+        c[y, x0:x1] = value
+        c[y0:y1, x] = value
+
+    else:
+        raise ValueError(f"Unknown shape='{shape}'. Use 'square', 'diamond', or 'cross'.")
+
+
+def topk_points_nms(
+    c_np: np.ndarray,
+    k: int = 3,
+    min_dist: int = 20,
+    shape: str = "square",
+    weight_mode: str = "linear",
+    conf_pow: float = 1.0,
+    eps: float = 1e-8,
+    stop_if_nonpositive: bool = True,
+    avg_score_mode: str = "sum",   # "sum" | "mean"
+):
+    """
+    Pick top-k peaks with NMS and append a confidence-weighted average point
+    in the SAME (x, y, score) format as other points.
+
+    Returns:
+        points: [(x, y, conf), ..., (x_mean, y_mean, avg_score)]
+                The last one is the weighted average point.
+    """
+    if c_np.ndim != 2:
+        raise ValueError(f"c_np must be 2D, got shape {c_np.shape}")
+
+    c = c_np.copy()
+    points = []
+
+    for _ in range(int(k)):
+        idx = int(np.argmax(c))
+        score = float(c.flat[idx])
+
+        if stop_if_nonpositive and ((not np.isfinite(score)) or (score <= 0.0)):
+            break
+
+        y, x = np.unravel_index(idx, c.shape)
+        x = int(x)
+        y = int(y)
+
+        points.append((float(x), float(y), float(score)))
+        _apply_nms_mask(c, x, y, min_dist=min_dist, shape=shape, value=0.0)
+
+    # Append confidence-weighted average point (same tuple format)
+    if len(points) > 0:
+        xs = np.array([p[0] for p in points], dtype=np.float64)
+        ys = np.array([p[1] for p in points], dtype=np.float64)
+        cs = np.array([p[2] for p in points], dtype=np.float64)
+
+        if weight_mode == "linear":
+            w = np.maximum(cs, 0.0)
+            w_sum = float(w.sum())
+            w = (np.ones_like(w) / len(w)) if (w_sum <= eps) else (w / (w_sum + eps))
+
+        elif weight_mode == "softmax":
+            z = cs - cs.max()
+            w = np.exp(z)
+            w = w / (float(w.sum()) + eps)
+
+        elif weight_mode == "power":
+            w = np.maximum(cs, 0.0) ** float(conf_pow)
+            w_sum = float(w.sum())
+            w = (np.ones_like(w) / len(w)) if (w_sum <= eps) else (w / (w_sum + eps))
+
+        else:
+            raise ValueError("weight_mode must be 'linear', 'softmax', or 'power'.")
+
+        x_mean = float((xs * w).sum())
+        y_mean = float((ys * w).sum())
+
+        conf_mean = float(cs.mean())
+        conf_sum  = float(cs.sum())
+
+        if avg_score_mode == "sum":
+            avg_score = conf_sum
+        elif avg_score_mode == "mean":
+            avg_score = conf_mean
+        else:
+            raise ValueError("avg_score_mode must be 'sum' or 'mean'.")
+
+        # IMPORTANT: same (x, y, score) format
+        points.append((x_mean, y_mean, avg_score))
+
+    return points
+
+def draw_points_on_image(
+    img_bgr_uint8,
+    points,
+    color_point=(0, 0, 255),   # red
+    color_peak=(255, 0, 0),    # blue (BGR)
+):
+    """
+    img_bgr_uint8: (H, W, 3) uint8 BGR
+    points: [(x, y, score), ...]
+    """
+    vis = img_bgr_uint8.copy()
+    H, W = vis.shape[:2]
+
+    if len(points) == 0:
+        return vis
+
+    # -------- find highest-score point --------
+    peak_idx = max(range(len(points)), key=lambda i: points[i][2])
+
+    for i, (x, y, score) in enumerate(points):
+        x_i = int(np.clip(round(x), 0, W - 1))
+        y_i = int(np.clip(round(y), 0, H - 1))
+
+        # ===== highest-score point =====
+        if i == peak_idx:
+            size = 8
+            thickness = 3
+
+            # draw diamond ◇
+            pts = np.array([
+                [x_i, y_i - size],
+                [x_i + size, y_i],
+                [x_i, y_i + size],
+                [x_i - size, y_i],
+            ], np.int32).reshape((-1, 1, 2))
+
+            cv2.polylines(
+                vis,
+                [pts],
+                isClosed=True,
+                color=color_peak,
+                thickness=thickness,
+            )
+
+            cv2.putText(
+                vis,
+                f"max:{score:.2f}",
+                (x_i + 8, max(0, y_i - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                color_peak,
+                2,
+                cv2.LINE_AA,
+            )
+
+        # ===== other points =====
+        else:
+            cv2.circle(vis, (x_i, y_i), 7, (0, 0, 0), -1)
+            cv2.circle(vis, (x_i, y_i), 5, color_point, -1)
+
+            cv2.putText(
+                vis,
+                f"{i+1}:{score:.2f}",
+                (x_i + 8, max(0, y_i - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                color_point,
+                2,
+                cv2.LINE_AA,
+            )
+
+    return vis
+
+def map_points_depth_to_original(points, original_coords_i, depth_size, square_size):
+    """
+    points: [(x_d, y_d, score), ...] in depth/conf coords (depth_size)
+    original_coords_i: [x1, y1, x2, y2, W0, H0] in square_size coords
+    returns: [(x0, y0, score), ...] in original image coords (W0, H0)
+    """
+    x1, y1, x2, y2, W0, H0 = original_coords_i
+    W0, H0 = float(W0), float(H0)
+
+    sx = square_size / float(depth_size)
+
+    out = []
+    for x_d, y_d, s in points:
+        # depth -> square
+        x_sq = x_d * sx
+        y_sq = y_d * sx
+
+        # square -> original
+        x0 = (x_sq - x1) * (W0 / (x2 - x1 + 1e-6))
+        y0 = (y_sq - y1) * (H0 / (y2 - y1 + 1e-6))
+
+        x0 = float(np.clip(x0, 0, W0 - 1))
+        y0 = float(np.clip(y0, 0, H0 - 1))
+        out.append((x0, y0, s))
+    return out
+
 def restructure_scene_dir(scene_dir: str):
     print(f"[INFO] Restructuring scene dir: {scene_dir}")
 
@@ -333,6 +564,9 @@ def parse_args():
     parser.add_argument("--max_query_pts", type=int, default=None, help="Maximum number of query points")
     parser.add_argument("--max_points_for_colmap", type=int, default=100000, help="Maximum number for colmap point cloud") # the default from vggtx is 500000
     parser.add_argument("--shared_camera", action="store_true", default=False, help="Use shared camera for all images")
+    parser.add_argument(
+        "--conf_thres_value", type=float, default=5.0, help="Confidence threshold value for depth filtering (wo BA)"
+    )
     
     # todo: for sparse view experiments
     parser.add_argument("--eval_dir", help="dir that contains burrs/good/missing/stains")
@@ -433,15 +667,16 @@ def demo_fn(args):
         )
         tm.mark("after_ga")
 
+    images = images.detach().cpu()
     # conf_thres_value = np.percentile(depth_conf, 0.5)
-    conf_thres_value = 5.0
+    conf_thres_value = args.conf_thres_value
     print(f"Using confidence threshold: {conf_thres_value}")
     shared_camera = False  # in colmap result saving, we do not support shared camera
     camera_type = "PINHOLE"  # in colmap result saving, we only support PINHOLE camera
 
-    c = 2.5  # scale factor for better reconstruction, hard-coded here
-    extrinsic[:, :3, 3] *= c
-    depth_map *= c
+    # c = 2.5  # scale factor for better reconstruction, hard-coded here
+    # extrinsic[:, :3, 3] *= c
+    # depth_map *= c
 
     points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
 
@@ -495,13 +730,14 @@ def demo_fn(args):
         # 3) Pack: 10 train + ALL queries, run VGGT ONCE
         # ------------------------------------------------------------
         packed_imgs = torch.cat([images_10, q_imgs], dim=0)
+        original_coords_10 = original_coords_10.detach().cpu().numpy() if torch.is_tensor(original_coords_10) else original_coords_10
         packed_coords = np.concatenate([original_coords_10, q_coords], axis=0)
         packed_paths = image_path_list_10 + qpaths_all
         packed_paths_name = [os.path.basename(p) for p in packed_paths]
 
         print(f"[OK][{now}] Packed {len(image_path_list_10)} train + {len(qpaths_all)} query = {len(packed_paths)} total frames")
 
-        extri, intri, _, _ = run_VGGT(packed_imgs, device, dtype, img_load_resolution, tm)
+        extri, intri, depth_map_query, depth_conf_query = run_VGGT(packed_imgs, device, dtype, img_load_resolution, tm)
 
         out_path = os.path.join(target_scene_dir, "transforms_query_poses_uncentered.json")
         write_transforms_json_from_vggt(
@@ -516,32 +752,177 @@ def demo_fn(args):
         print(f"[DONE][{now}] all queries processed")
         tm.mark("after_find_query_poses")
 
+        if args.save_depth:
+            os.makedirs(target_scene_dir, exist_ok=True)
+            depth_map_dir = os.path.join(target_scene_dir, "verbose", "depth_map_query")
+            depth_conf_dir = os.path.join(target_scene_dir, "verbose", "depth_conf_map_query")
+            os.makedirs(depth_map_dir, exist_ok=True)
+            os.makedirs(depth_conf_dir, exist_ok=True)
+            
+            save_depth_outputs(depth_map_query, depth_conf_query, out_dir=target_scene_dir, prefix="vggt_query")
+
+            for i in range(depth_map_query.shape[0]):
+                import matplotlib.pyplot as plt
+
+                base_name = os.path.splitext(packed_paths_name[i])[0]
+
+                save_depth_png(
+                    depth_map_query[i],
+                    os.path.join(
+                        target_scene_dir,
+                        "verbose",
+                        "depth_map_query",
+                        f"depth_{base_name}.png",
+                    )
+                )
+
+                c = depth_conf_query[i]
+                c_np = (
+                    c.detach().float().cpu().numpy()
+                    if torch.is_tensor(c)
+                    else c.astype(np.float32)
+                )
+
+                # percentile for robust visualization
+                vmin = np.percentile(c_np, 5)
+                vmax = np.percentile(c_np, 95)
+
+                # 1) clip
+                c_clip = np.clip(c_np, vmin, vmax)
+
+                # 2) normalize to [0,255]
+                c_norm = (c_clip - vmin) / (vmax - vmin + 1e-6)
+                c_uint8 = (c_norm * 255).astype(np.uint8)
+
+                # 3) apply colormap (JET / TURBO / INFERNO 都可以)
+                conf_heatmap = cv2.applyColorMap(c_uint8, cv2.COLORMAP_TURBO)
+                # alternatives:
+                # cv2.COLORMAP_JET
+                # cv2.COLORMAP_INFERNO
+                # cv2.COLORMAP_VIRIDIS
+
+                # 4) save (BGR already)
+                out_path = os.path.join(
+                    target_scene_dir,
+                    "verbose",
+                    "depth_conf_map_query",
+                    f"depth_conf_query_heatmap_{base_name}.png",
+                )
+                cv2.imwrite(out_path, conf_heatmap)
+
     if args.save_depth:
         os.makedirs(target_scene_dir, exist_ok=True)
         depth_map_dir = os.path.join(target_scene_dir, "verbose", "depth_map")
         depth_conf_dir = os.path.join(target_scene_dir, "verbose", "depth_conf_map")
+        conf_points_dir = os.path.join(target_scene_dir, "verbose", "conf_points")
+        conf_hist_dir = os.path.join(target_scene_dir, "verbose", "depth_conf_hist")
         os.makedirs(depth_map_dir, exist_ok=True)
         os.makedirs(depth_conf_dir, exist_ok=True)
+        os.makedirs(conf_points_dir, exist_ok=True)
+        os.makedirs(conf_hist_dir, exist_ok=True)
         
         save_depth_outputs(depth_map, depth_conf, out_dir=target_scene_dir, prefix="vggt")
 
         for i in range(depth_map.shape[0]):
-            # save depth map
+            import matplotlib.pyplot as plt
+
+            base_name = os.path.splitext(base_image_path_list[i])[0]
+
             save_depth_png(
                 depth_map[i],
-                os.path.join(target_scene_dir, "verbose", "depth_map", f"depth_{i:03d}.png")
+                os.path.join(
+                    target_scene_dir,
+                    "verbose",
+                    "depth_map",
+                    f"depth_{base_name}.png",
+                )
             )
-            # save depth confidence map
+
             c = depth_conf[i]
-            c_np = c.detach().float().cpu().numpy() if torch.is_tensor(c) else c.astype(np.float32)
+            c_np = (
+                c.detach().float().cpu().numpy()
+                if torch.is_tensor(c)
+                else c.astype(np.float32)
+            )
+
+            # percentile for robust visualization
             vmin = np.percentile(c_np, 5)
             vmax = np.percentile(c_np, 95)
-            save_depth_png(
-                c_np,
-                os.path.join(target_scene_dir, "verbose", "depth_conf_map", f"depth_conf_{i:03d}.png"),
-                vmin=vmin,
-                vmax=vmax
+
+            # 1) clip
+            c_clip = np.clip(c_np, vmin, vmax)
+
+            # 2) normalize to [0,255]
+            c_norm = (c_clip - vmin) / (vmax - vmin + 1e-6)
+            c_uint8 = (c_norm * 255).astype(np.uint8)
+
+            # 3) apply colormap (JET / TURBO / INFERNO 都可以)
+            conf_heatmap = cv2.applyColorMap(c_uint8, cv2.COLORMAP_TURBO)
+            # alternatives:
+            # cv2.COLORMAP_JET
+            # cv2.COLORMAP_INFERNO
+            # cv2.COLORMAP_VIRIDIS
+
+            # 4) save (BGR already)
+            out_path = os.path.join(
+                target_scene_dir,
+                "verbose",
+                "depth_conf_map",
+                f"depth_conf_heatmap_{base_name}.png",
             )
+            cv2.imwrite(out_path, conf_heatmap)
+
+            ## if normalize
+            # c_proc = np.clip(c_np, vmin, vmax)
+            # c_proc = (c_proc - vmin) / (vmax - vmin + 1e-6)
+
+            ## if mask
+            # depth_i = depth_map[i].detach().float().cpu().numpy() if torch.is_tensor(depth_map[i]) else depth_map[i]
+            # mask = np.isfinite(depth_i) & (depth_i > 0)
+            # vals = c_proc[mask].reshape(-1)
+            vals = c_np.reshape(-1)
+
+            fig = plt.figure()
+            plt.hist(vals, bins=50)
+            plt.title(f"depth_conf histogram: {base_name}\nclip p5={vmin:.3g}, p95={vmax:.3g}")
+            plt.xlabel("conf (clipped & normalized to [0,1])")
+            plt.ylabel("count")
+            hist_path = os.path.join(conf_hist_dir, f"depth_conf_hist_{base_name}.png")
+            plt.tight_layout()
+            plt.savefig(hist_path, dpi=150)
+            plt.close(fig)
+
+            pts_depth = topk_points_nms(c_np, k=10, min_dist=15, shape="diamond")
+            depth_size = int(c_np.shape[-1])         # e.g. 518
+            square_size = int(images.shape[-1])      # e.g. 1024
+
+            pts_orig = map_points_depth_to_original(
+                pts_depth,
+                original_coords[i].detach().cpu().numpy(),
+                depth_size=depth_size,
+                square_size=square_size,
+            )
+
+            orig_path = image_path_list[i]
+            orig_bgr = cv2.imread(orig_path, cv2.IMREAD_COLOR)
+            if orig_bgr is None:
+                raise ValueError(f"Failed to read image: {orig_path}")
+            
+            conf_vis = draw_points_on_image(orig_bgr, pts_orig)
+
+            out_path = os.path.join(
+                target_scene_dir,
+                "verbose",
+                "conf_points",
+                f"depth_conf_top3_on_orig_{base_name}.png",
+            )
+
+            ok = cv2.imwrite(out_path, conf_vis)
+            if not ok:
+                raise IOError(
+                    f"cv2.imwrite failed: {out_path}, "
+                    f"shape={conf_vis.shape}, dtype={conf_vis.dtype}"
+                )
 
     image_size = np.array([depth_map.shape[1], depth_map.shape[2]])
     num_frames, height, width, _ = points_3d.shape

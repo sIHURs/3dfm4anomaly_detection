@@ -27,7 +27,6 @@ import torch.nn as nn
 import copy
 import importlib
 
-
 def qvec2rotmat(qvec):
     return torch.tensor(
         [
@@ -1037,3 +1036,54 @@ def load_pose_lookup(transforms_json_path: str):
             name = os.path.basename(fr["file_path"])
             pose_by_name[name] = np.array(fr["transform_matrix"], dtype=np.float32)
         return pose_by_name, data.get("camera_angle_x", None)
+
+def load_depth_outputs(
+    out_dir,
+    prefix="vggt",
+    device="cpu",
+    as_torch=False,
+    skip_first=10,
+):
+    """
+    Load depth_map and depth_conf saved by save_depth_outputs.
+
+    Args:
+        out_dir (str): same out_dir used in save_depth_outputs
+        prefix (str): prefix used in save (default: "vggt")
+        device (str): "cpu" or "cuda"
+        as_torch (bool): if True, return torch.Tensor; else numpy.ndarray
+        skip_first (int): number of leading frames to drop (default: 0)
+
+    Returns:
+        depth_map, depth_conf
+          shape: (N - skip_first, H, W)
+    """
+    verbose_dir = os.path.join(out_dir, "verbose")
+
+    depth_path = os.path.join(verbose_dir, f"{prefix}_depth.npy")
+    conf_path  = os.path.join(verbose_dir, f"{prefix}_depth_conf.npy")
+
+    if not os.path.exists(depth_path):
+        raise FileNotFoundError(depth_path)
+    if not os.path.exists(conf_path):
+        raise FileNotFoundError(conf_path)
+
+    depth_map  = np.load(depth_path)
+    depth_conf = np.load(conf_path)
+
+    # ----------------------------
+    # drop first N frames
+    # ----------------------------
+    if skip_first > 0:
+        if skip_first >= depth_map.shape[0]:
+            raise ValueError(
+                f"skip_first={skip_first} >= number of frames {depth_map.shape[0]}"
+            )
+        depth_map  = depth_map[skip_first:]
+        depth_conf = depth_conf[skip_first:]
+
+    if as_torch:
+        depth_map  = torch.from_numpy(depth_map).to(device)
+        depth_conf = torch.from_numpy(depth_conf).to(device)
+
+    return depth_map, depth_conf

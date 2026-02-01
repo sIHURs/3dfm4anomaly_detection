@@ -955,6 +955,7 @@ def demo_fn(args):
         reconstruction_resolution = img_load_resolution
     else:
         conf_thres_value = args.conf_thres_value
+        # conf_thres_value = np.percentile(depth_conf, 70)
         max_points_for_colmap = args.max_points  # randomly sample 3D points
         shared_camera = False  # in the feedforward manner, we do not support shared camera
         camera_type = "PINHOLE"  # in the feedforward manner, we only support PINHOLE camera

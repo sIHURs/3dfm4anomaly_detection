@@ -179,3 +179,5 @@ experiments/
 wandb/
 wandb/**
 core
+tmp
+tmp_fucked

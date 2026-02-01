@@ -33,7 +33,7 @@ PIAD_CL_classnames = ["Axletree", "Box", "Can", "Chain", "Gear", "Keyring", "Mot
                       "Spray_can", "Spring", "Sprockets"]
 
 
-DEBUG_CONF_FEATURE = False
+DEBUG_CONF_FEATURE = True
 
 
 pre_parser = ArgumentParser(description="Parameters of the LEGO training run")
@@ -314,18 +314,26 @@ if DEBUG_CONF_FEATURE:
             rgb_feature = model(rgb)
 
             score = criterion(ref, rgb).sum(1, keepdim=True)
+            print("[DEBUG] 1, score:", score.shape)
             for j in range(len(ref_feature)):
                 s_act = ref_feature[j]
                 mse_loss = criterion(s_act, rgb_feature[j]).sum(1, keepdim=True)
                 score += F.interpolate(mse_loss, size=224, mode='bilinear', align_corners=False)
 
+            print("[DEBUG] 2, score:", score.shape)
             # score: (B,1,224,224) -> numpy (B,224,224)
             score = score.squeeze(1).cpu().numpy().astype(np.float32)
+            print("[DEBUG] 3, score:", score.shape)
+
+            # ! smooth anomaly map (keep your current behavior)
+            # for b in range(score.shape[0]):
+            #     score[b] = gaussian_filter(score[b], sigma=4)
 
             if args.verbose:
                 save_dir = os.path.join(result_dir, "3dgs_imgs", fileId.split(".")[0])
                 os.makedirs(save_dir, exist_ok=True)
-
+                raw = score[0].astype(np.float32)
+                np.save(os.path.join(save_dir, "anomaly_raw.npy"), raw)
                 vis = score[0].copy()
                 vis = vis - vis.min()
                 if vis.max() > 0:
@@ -333,10 +341,6 @@ if DEBUG_CONF_FEATURE:
                 vis = (vis * 255).astype(np.uint8)
 
                 Image.fromarray(vis).save(os.path.join(save_dir, "anomaly.png"))
-
-            # smooth anomaly map (keep your current behavior)
-            # for b in range(score.shape[0]):
-            #     score[b] = gaussian_filter(score[b], sigma=4)
 
             # =========================
             # NEW: soft conf suppression (global, no region split)
@@ -356,27 +360,23 @@ if DEBUG_CONF_FEATURE:
                 c_t = torch.from_numpy(c_np)[None, None, ...]
                 c_224 = F.interpolate(c_t, size=(224, 224), mode="bilinear", align_corners=False)[0, 0].numpy()
 
-            # 可选：conf 平滑（一般不需要；需要的话 sigma=1~2）
-            # c_224 = gaussian_filter(c_224, sigma=1)
+            # 1) 不要强平滑（先关掉）
+            # c_224 = gaussian_filter(c_224, sigma=0)
 
-            # conf -> weight
-            w, (c_lo, c_hi) = conf_to_weight_np(c_224, c_low_percent=30, c_high_percent=90, gamma=1.0)
+            # 2) conf -> w (0..1)
+            w, _ = conf_to_weight_np(c_224, c_low_percent=5, c_high_percent=95, gamma=1.0)
 
-            # apply to all pixels
-            lam = 0.7  # 惩罚强度：0~1，越大越抑制低conf
+            # 3) 非线性增强：低 conf 更狠
+            gamma_w = 4.0
+            w2 = np.clip(w, 0.0, 1.0) ** gamma_w
 
+            # 4) factor 范围拉开
+            floor = 0.02                       # 最低只保留 2%
+            factor = floor + (1.0 - floor) * w2
+
+            # apply
             for b in range(score.shape[0]):
-                # ---- 2) 方案 C：先把 score 归一化到 0~1（每张独立）----
-                s = score[b]
-                s = s - s.min()
-                s = s / (s.max() + 1e-8)
-
-                # ---- 3) 方案 B：只惩罚低 conf（不奖励高 conf）----
-                # w=1 -> factor=1
-                # w=0 -> factor=1-lam
-                factor = 1.0 - lam * (1.0 - w)
-
-                score[b] = s * factor
+                score[b] = score[b] * factor
 
             # =========================
             # save (unchanged except name)
@@ -384,7 +384,8 @@ if DEBUG_CONF_FEATURE:
             if args.verbose:
                 save_dir = os.path.join(result_dir, "3dgs_imgs", fileId.split(".")[0])
                 os.makedirs(save_dir, exist_ok=True)
-
+                raw = score[0].astype(np.float32)
+                np.save(os.path.join(save_dir, "anomaly_conf_soft_raw.npy"), raw)
                 vis = score[0].copy()
                 vis = vis - vis.min()
                 if vis.max() > 0:

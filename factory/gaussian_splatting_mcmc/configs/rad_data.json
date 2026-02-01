@@ -1,0 +1,5 @@
+{
+    "resolution": 1,
+    "cap_max": 800000,
+    "init_type": "sfm"
+}
