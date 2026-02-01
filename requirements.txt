@@ -20,11 +20,12 @@ safetensors
 pycolmap==3.10.0
 glm
 tensorboard
-skvideo
+scikit-video
 jaxtyping
 dacite
 lightning
-xformers==v0.0.32.post2
+viser
+# xformers==v0.0.32.post2
 
 # build torch-scatter
 # pip install torch-scatter -f https://data.pyg.org/whl/torch-2.8.0+${CUDA}.html
@@ -32,6 +33,6 @@ e3nn
 
 # build gsplat
 # pip install --no-build-isolation git+https://github.com/nerfstudio-project/gsplat.git
-git+https://github.com/nerfstudio-project/gsplat.git
+# git+https://github.com/nerfstudio-project/gsplat.git
 
 colorspacious

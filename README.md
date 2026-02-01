@@ -197,6 +197,15 @@ pip install . --no-build-isolation
 dc submodules/fused-ssim
 git checkout 1272e21
 pip install . --no-build-isolation 
+
+# some times cant import torch
+# get error: 
+# from torch._C import *  # noqa: F403
+# ImportError: /root/miniconda3/envs/pt24_cuda124_py310/lib/python3.10/site-packages/torch/lib/libtorch_cpu.so: undefined symbol: iJIT_NotifyEvent
+# cuz MKL is too new
+# run 
+conda install -y "mkl=2024.0.0" "mkl-service" "intel-openmp=2024.0.0"
+
 ```
 
 ### Framework Factory
