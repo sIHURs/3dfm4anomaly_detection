@@ -619,7 +619,8 @@ class DefectDataset(Dataset):
         self.class_names = ['good']
         self.get_mask = get_mask
         self.get_features = get_features
-        self.image_transforms = transforms.Compose([transforms.Resize(img_size),
+        self.image_transforms = transforms.Compose([
+                                                    # transforms.Resize(img_size),
                                                     transforms.ToTensor(),
                                                    ])
         root = os.path.join(dataset_dir, class_name)

@@ -13,11 +13,12 @@ Sparsepath=$Datapath/sparse
 Camerapath=$Datapath/camera
 
 rm -rf $Datapath
-mkdir $Datapath
+mkdir -p $Datapath
+
 colmap feature_extractor \
     --database_path $Datapath/database.db \
     --image_path $Datapathraw \
-    --ImageReader.camera_model SIMPLE_RADIAL \
+    --ImageReader.camera_model SIMPLE_PINHOLE \
     --ImageReader.single_camera=true \
     --SiftExtraction.use_gpu=true \
     --SiftExtraction.num_threads=32 \
@@ -50,48 +51,48 @@ for path in $Datapath/sparse/*/; do
 done
 
 # ------------------------------------
-mkdir $Densepath
+# mkdir -p $Densepath
 
-colmap image_undistorter \
-    --image_path $Datapathraw \
-    --input_path $Datapath/sparse \
-    --output_path $Densepath \
-    --output_type=COLMAP
+# colmap image_undistorter \
+#     --image_path $Datapathraw \
+#     --input_path $Datapath/sparse \
+#     --output_path $Densepath \
+#     --output_type=COLMAP
 
-mkdir $MaskDensepath
+# mkdir -p $MaskDensepath
 
-colmap image_undistorter \
-    --image_path $Maskpathraw \
-    --input_path $Datapath/sparse \
-    --output_path $MaskDensepath \
-    --output_type=COLMAP
+# colmap image_undistorter \
+#     --image_path $Maskpathraw \
+#     --input_path $Datapath/sparse \
+#     --output_path $MaskDensepath \
+#     --output_type=COLMAP
 
-# ------------------------------------
-colmap patch_match_stereo \
-    --workspace_path $Densepath \
-    --workspace_format COLMAP \
-    --PatchMatchStereo.geom_consistency true
+# # ------------------------------------
+# colmap patch_match_stereo \
+#     --workspace_path $Densepath \
+#     --workspace_format COLMAP \
+#     --PatchMatchStereo.geom_consistency true
 
-python transfer_mask.py \
-    --dir $MaskDensepath/images \
-    --dir_output $MaskDensepath/images_mask
+# python transfer_mask.py \
+#     --dir $MaskDensepath/images \
+#     --dir_output $MaskDensepath/images_mask
 
-colmap stereo_fusion \
-    --workspace_path $Densepath \
-    --workspace_format COLMAP \
-    --input_type geometric \
-    --output_path $Densepath/result.ply \
-    --StereoFusion.mask_path $MaskDensepath/images_mask/
+# colmap stereo_fusion \
+#     --workspace_path $Densepath \
+#     --workspace_format COLMAP \
+#     --input_type geometric \
+#     --output_path $Densepath/result.ply \
+#     --StereoFusion.mask_path $MaskDensepath/images_mask/
 
-colmap stereo_fusion \
-    --workspace_path $Densepath \
-    --workspace_format COLMAP \
-    --input_type geometric \
-    --output_path $Densepath/result_unmask.ply 
+# colmap stereo_fusion \
+#     --workspace_path $Densepath \
+#     --workspace_format COLMAP \
+#     --input_type geometric \
+#     --output_path $Densepath/result_unmask.ply 
     
-mkdir $Camerapath
+# mkdir -p $Camerapath
 
-colmap model_converter \
-    --input_path $Sparsepath \
-    --output_path $Camerapath \
-    --output_type TXT
+# colmap model_converter \
+#     --input_path $Sparsepath \
+#     --output_path $Camerapath \
+#     --output_type TXT

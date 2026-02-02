@@ -52,6 +52,7 @@ def main_pose_estimation(cur_class,
         train_poses = np.stack([np.array(f["transform_matrix"]) for f in trainset.camera_transforms["frames"]], axis=0)
     elif retrieval == "vggt":
         pose_by_name, _ = load_pose_lookup(query_json_path)
+        print("[INFO] Loaded pose lookup with", len(pose_by_name), pose_by_name)
     else:
         raise NotImplementedError(f"Retrieval {retrieval} not implemented!")
 
@@ -120,8 +121,10 @@ def main_pose_estimation(cur_class,
         set_entry = testset[i]
         
         all_labels.append(set_entry[1])
+        # print("[DEBUG] all_labels:", all_labels)
         
         gt_masks.append(set_entry[2].cpu().numpy())
+        # print("[DEBUG] gt_masks:", gt_masks)
         
         loftr_start.record()
         if retrieval == "loftr":
@@ -137,6 +140,7 @@ def main_pose_estimation(cur_class,
                 raise KeyError(
                     f"Pose not found for {filename}. Example keys: {list(pose_by_name.keys())[:5]}"
                 )
+            print("[INFO] Retrieved pose for", filename)
             c2w_init_np = pose_by_name[filename]
         else:
             raise NotImplementedError(f"Retrieval {retrieval} not implemented!")
@@ -167,9 +171,10 @@ def main_pose_estimation(cur_class,
         optimizer = torch.optim.Adam(cam_transf.parameters(), lr=0.001, betas=(0.9, 0.999))
 
         # todo: tmp hard coded
-        resolution = (800, 800) 
+        resolution = (1291, 721) 
         # new version requires pil image input
         img = set_entry[0]
+        # print("[DEBUG] gt_image:", img, img.shape)
         if img.ndim == 3 and img.shape[0] in (1,3,4):  # CHW
             pil_img = to_pil_image(img)
         else:  # HWC
@@ -202,6 +207,7 @@ def main_pose_estimation(cur_class,
                 init_image = torch.clone(rendering).cpu().detach()
 
             gt_image = set_entry[0].to("cuda")
+            # print("[DEBUG] gt_image:", gt_image, gt_image.shape)
             loss = 0.8 * l1_loss(rendering, gt_image) + 0.2 * (1 - ssim(rendering, gt_image))
             loss.backward()
           

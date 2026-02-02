@@ -666,13 +666,25 @@ def demo_fn(args):
         print(f"TESTING SPARSE VIEW INPUT")
         print(f"[OK][{now}] Preparing query images from {args.eval_dir}")
 
-        subsets = ["Burrs", "good", "Missing", "Stains"]
+        subsets = ["Burrs", "good", "Missing", "Stains", "scratched", "stained", "squeezed"]
+        wanted = {s.lower(): s for s in subsets}
+
+        existing_dirs = {
+            name.lower(): name
+            for name in os.listdir(args.eval_dir)
+            if os.path.isdir(os.path.join(args.eval_dir, name))
+        }
+
         all_queries = []
         for s in subsets:
-            d = os.path.join(args.eval_dir, s)
-            if os.path.isdir(d):
-                q = list_images_sorted(d)
-                all_queries += [(s, p) for p in q]
+            key = s.lower()
+            if key not in existing_dirs:
+                continue
+            real_name = existing_dirs[key]
+            d = os.path.join(args.eval_dir, real_name)
+
+            q = list_images_sorted(d)
+            all_queries += [(s, p) for p in q]
 
         if not all_queries:
             raise RuntimeError(
@@ -727,7 +739,7 @@ def demo_fn(args):
             os.makedirs(depth_map_dir, exist_ok=True)
             os.makedirs(depth_conf_dir, exist_ok=True)
             
-            save_depth_outputs(depth_map_query, depth_conf_query, out_dir=args.output_dir, prefix="vggt_query")
+            # save_depth_outputs(depth_map_query, depth_conf_query, out_dir=args.output_dir, prefix="vggt_query")
 
             for i in range(depth_map_query.shape[0]):
                 import matplotlib.pyplot as plt
@@ -782,14 +794,14 @@ def demo_fn(args):
         os.makedirs(args.output_dir, exist_ok=True)
         depth_map_dir = os.path.join(args.output_dir, "verbose", "depth_map")
         depth_conf_dir = os.path.join(args.output_dir, "verbose", "depth_conf_map")
-        conf_points_dir = os.path.join(args.output_dir, "verbose", "conf_points")
-        conf_hist_dir = os.path.join(args.output_dir, "verbose", "depth_conf_hist")
+        # conf_points_dir = os.path.join(args.output_dir, "verbose", "conf_points")
+        # conf_hist_dir = os.path.join(args.output_dir, "verbose", "depth_conf_hist")
         os.makedirs(depth_map_dir, exist_ok=True)
         os.makedirs(depth_conf_dir, exist_ok=True)
-        os.makedirs(conf_points_dir, exist_ok=True)
-        os.makedirs(conf_hist_dir, exist_ok=True)
+        # os.makedirs(conf_points_dir, exist_ok=True)
+        # os.makedirs(conf_hist_dir, exist_ok=True)
         
-        save_depth_outputs(depth_map, depth_conf, out_dir=args.output_dir, prefix="vggt")
+        # save_depth_outputs(depth_map, depth_conf, out_dir=args.output_dir, prefix="vggt")
 
         for i in range(depth_map.shape[0]):
             import matplotlib.pyplot as plt
@@ -840,57 +852,58 @@ def demo_fn(args):
             )
             cv2.imwrite(out_path, conf_heatmap)
 
-            ## if normalize
+            # # if normalize
             # c_proc = np.clip(c_np, vmin, vmax)
             # c_proc = (c_proc - vmin) / (vmax - vmin + 1e-6)
 
-            ## if mask
+            # # if mask
             # depth_i = depth_map[i].detach().float().cpu().numpy() if torch.is_tensor(depth_map[i]) else depth_map[i]
             # mask = np.isfinite(depth_i) & (depth_i > 0)
             # vals = c_proc[mask].reshape(-1)
-            vals = c_np.reshape(-1)
-
-            fig = plt.figure()
-            plt.hist(vals, bins=50)
-            plt.title(f"depth_conf histogram: {base_name}\nclip p5={vmin:.3g}, p95={vmax:.3g}")
-            plt.xlabel("conf (clipped & normalized to [0,1])")
-            plt.ylabel("count")
-            hist_path = os.path.join(conf_hist_dir, f"depth_conf_hist_{base_name}.png")
-            plt.tight_layout()
-            plt.savefig(hist_path, dpi=150)
-            plt.close(fig)
-
-            pts_depth = topk_points_nms(c_np, k=10, min_dist=15, shape="diamond")
-            depth_size = int(c_np.shape[-1])         # e.g. 518
-            square_size = int(images.shape[-1])      # e.g. 1024
-
-            pts_orig = map_points_depth_to_original(
-                pts_depth,
-                original_coords[i].detach().cpu().numpy(),
-                depth_size=depth_size,
-                square_size=square_size,
-            )
-
-            orig_path = image_path_list[i]
-            orig_bgr = cv2.imread(orig_path, cv2.IMREAD_COLOR)
-            if orig_bgr is None:
-                raise ValueError(f"Failed to read image: {orig_path}")
             
-            conf_vis = draw_points_on_image(orig_bgr, pts_orig)
+            # vals = c_np.reshape(-1)
 
-            out_path = os.path.join(
-                args.output_dir,
-                "verbose",
-                "conf_points",
-                f"depth_conf_top3_on_orig_{base_name}.png",
-            )
+            # fig = plt.figure()
+            # plt.hist(vals, bins=50)
+            # plt.title(f"depth_conf histogram: {base_name}\nclip p5={vmin:.3g}, p95={vmax:.3g}")
+            # plt.xlabel("conf (clipped & normalized to [0,1])")
+            # plt.ylabel("count")
+            # hist_path = os.path.join(conf_hist_dir, f"depth_conf_hist_{base_name}.png")
+            # plt.tight_layout()
+            # plt.savefig(hist_path, dpi=150)
+            # plt.close(fig)
 
-            ok = cv2.imwrite(out_path, conf_vis)
-            if not ok:
-                raise IOError(
-                    f"cv2.imwrite failed: {out_path}, "
-                    f"shape={conf_vis.shape}, dtype={conf_vis.dtype}"
-                )
+            # pts_depth = topk_points_nms(c_np, k=10, min_dist=15, shape="diamond")
+            # depth_size = int(c_np.shape[-1])         # e.g. 518
+            # square_size = int(images.shape[-1])      # e.g. 1024
+
+            # pts_orig = map_points_depth_to_original(
+            #     pts_depth,
+            #     original_coords[i].detach().cpu().numpy(),
+            #     depth_size=depth_size,
+            #     square_size=square_size,
+            # )
+
+            # orig_path = image_path_list[i]
+            # orig_bgr = cv2.imread(orig_path, cv2.IMREAD_COLOR)
+            # if orig_bgr is None:
+            #     raise ValueError(f"Failed to read image: {orig_path}")
+            
+            # conf_vis = draw_points_on_image(orig_bgr, pts_orig)
+
+            # out_path = os.path.join(
+            #     args.output_dir,
+            #     "verbose",
+            #     "conf_points",
+            #     f"depth_conf_top3_on_orig_{base_name}.png",
+            # )
+
+            # ok = cv2.imwrite(out_path, conf_vis)
+            # if not ok:
+            #     raise IOError(
+            #         f"cv2.imwrite failed: {out_path}, "
+            #         f"shape={conf_vis.shape}, dtype={conf_vis.dtype}"
+            #     )
 
     del model  # free memory
     torch.cuda.empty_cache()
