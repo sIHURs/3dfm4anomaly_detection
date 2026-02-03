@@ -57,7 +57,8 @@ def main_pose_estimation(cur_class,
         raise NotImplementedError(f"Retrieval {retrieval} not implemented!")
 
     testset = DefectDataset(data_dir, cur_class, "test", True, True, gt_file=json_name)
-    camera_angle_x = trainset.camera_angle
+    camera_angle_x = trainset.camera_angleX
+    camera_angle_y = trainset.camera_angleY
 
     # Set up command line argument parser
     eval_args = ["-w", "--eval", "-m", model_dir]
@@ -185,7 +186,7 @@ def main_pose_estimation(cur_class,
                             R=c2w_init[:3,:3].cpu().numpy(),
                             T=c2w_init[:3,3].cpu().numpy(),
                             FoVx=camera_angle_x, 
-                            FoVy=camera_angle_x,
+                            FoVy=camera_angle_y,
                             image=pil_img, 
                             image_name="aha", 
                             depth_params=None,

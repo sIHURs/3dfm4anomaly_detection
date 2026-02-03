@@ -403,17 +403,22 @@ if not DEBUG_CONF_FEATURE:
         # todo: use batch, not just single images at once
         for i in range(len(test_images)):
             ref=tf_img(reference_images[i]).unsqueeze(0).cuda()
+            print("[DEBUG] ref shape:", ref.shape)
             rgb=tf_img(test_images[i]).unsqueeze(0).cuda()
+            print("[DEBUG] rgb shape:", rgb.shape)
             fileId = filenames[i]
             # todo: torch.cat([ref, rgb], dim=0) then send into model, inference only once
             ref_feature=model(ref)
+            print("[DEBUG] ref_feature shape:", len(ref_feature), ref_feature[0].shape)
             rgb_feature=model(rgb)
+            print("[DEBUG] rgb_feature shape:", len(rgb_feature), rgb_feature[0].shape)
             score = criterion(ref, rgb).sum(1, keepdim=True)
             for i in range(len(ref_feature)):
                 
                 s_act = ref_feature[i]
                 mse_loss = criterion(s_act, rgb_feature[i]).sum(1, keepdim=True)
-                score += torch.nn.functional.interpolate(mse_loss, size=224, mode='bilinear', align_corners=False)
+                print("[DEBUG] mse_loss.shape:", mse_loss.shape)
+                score += torch.nn.functional.interpolate(mse_loss, size=score.shape[-2:], mode='bilinear', align_corners=False)
 
             score = score.squeeze(1).cpu().numpy()
             # todo: do gaussian_filter on gpu? - kornia?

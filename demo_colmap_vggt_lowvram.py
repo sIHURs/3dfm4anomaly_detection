@@ -463,11 +463,10 @@ def write_transforms_json_from_vggt(
         tmp[:, 3, 3] = 1.0
         extrinsic_w2c = tmp
     elif extrinsic_w2c.ndim == 3 and extrinsic_w2c.shape[1:] == (4, 4):
-        pass
+        N = extrinsic_w2c.shape[0]
     else:
         raise ValueError(f"Unsupported extrinsic shape: {extrinsic_w2c.shape}")
 
-    N = extrinsic_w2c.shape[0]
     if intrinsic.ndim == 2:
         intrinsic = np.repeat(intrinsic[None, ...], N, axis=0)
     elif intrinsic.ndim == 3 and intrinsic.shape[0] == N:
@@ -482,7 +481,7 @@ def write_transforms_json_from_vggt(
 
     frames = []
 
-    # compute camera_angle_x using first frame after rescale-to-original
+    # --- compute camera_angle_x/y using first frame after rescale-to-original ---
     real_wh0 = original_coords[0, -2:].astype(np.float64)  # (W,H)
     resize_ratio0 = max(real_wh0) / float(img_size)
 
@@ -490,8 +489,12 @@ def write_transforms_json_from_vggt(
     K0[:2, :] *= resize_ratio0
     K0[0, 2] = real_wh0[0] / 2.0
     K0[1, 2] = real_wh0[1] / 2.0
+
     fx0 = float(K0[0, 0])
+    fy0 = float(K0[1, 1])
+
     camera_angle_x = 2.0 * math.atan(float(real_wh0[0]) / (2.0 * fx0))
+    camera_angle_y = 2.0 * math.atan(float(real_wh0[1]) / (2.0 * fy0))
 
     for i in range(N):
         w2c = extrinsic_w2c[i].astype(np.float64)
@@ -519,6 +522,7 @@ def write_transforms_json_from_vggt(
 
     transforms = {
         "camera_angle_x": float(camera_angle_x),
+        "camera_angle_y": float(camera_angle_y),  # <-- added
         "frames": frames,
     }
 
