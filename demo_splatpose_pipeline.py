@@ -476,33 +476,32 @@ print(f"avg_total_time_ms : {np.mean(total_times):.2f}")
 print(f"total_time_ms : {np.sum(total_times):.2f}")
 
 ## todo ################################################
-# check the failed detected type
-# 1. 根据现有阈值生成预测结果 (True代表预测为异常, False代表正常)
-# img_scores 已经在前面计算过了: (N,)
-# threshold 也在前面计算过了 (基于像素F1最大化)
+# Check the types of failed detections
+
+# Generate predicted labels using the current threshold
+# img_scores has already been computed above: shape (N,)
+# threshold has also been computed above (based on maximizing pixel-level F1)
 pred_labels = img_scores > threshold
 
-# 2. 找出误判的索引
-# gt_list_isano 是布尔数组 (True代表真实异常, False代表真实正常)
+# Find indices of misclassified samples
+# gt_list_isano is a boolean array (True = ground-truth anomaly, False = ground-truth normal)
 
-# Case A: 误报 (False Positive) - 本来是好的，模型说是坏的
-# 逻辑: 预测为True 且 真值为False
+# Case A: False Positives (FP) - the sample is normal, but the model predicts anomaly
+# Logic: predicted True AND ground truth False
 fp_indices = np.where(pred_labels & ~gt_list_isano)[0]
 
-# Case B: 漏报 (False Negative) - 本来是坏的，模型说是好的
-# 逻辑: 预测为False 且 真值为True
+# Case B: False Negatives (FN) - the sample is anomalous, but the model predicts normal
+# Logic: predicted False AND ground truth True
 fn_indices = np.where(~pred_labels & gt_list_isano)[0]
 
-# 3. 打印结果
 print("-" * 30)
-print(f"使用的阈值 (Pixel-level F1 max): {threshold:.4f}")
-print(f"误报图片序号 (False Positives): {fp_indices}")
-print(f"漏报图片序号 (False Negatives): {fn_indices}")
+print(f"Threshold used (pixel-level F1 max): {threshold:.4f}")
+print(f"False positive indices: {fp_indices}")
+print(f"False negative indices: {fn_indices}")
 print("-" * 30)
 
-# 如果你想看具体的文件名（假设你有一个 filenames 列表）
-print("误报文件名:", [filenames[i] for i in fp_indices])
-print("漏报文件名:", [filenames[i] for i in fn_indices])
+print("False positive filenames:", [filenames[i] for i in fp_indices])
+print("False negative filenames:", [filenames[i] for i in fn_indices])
 #########################################################
 
 if args.use_wandb:

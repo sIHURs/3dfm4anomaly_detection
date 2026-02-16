@@ -697,7 +697,12 @@ def demo_fn(args):
         print(f"TESTING SPARSE VIEW INPUT")
         print(f"[OK][{now}] Preparing query images from {args.eval_dir}")
 
-        subsets = ["Burrs", "good", "Missing", "Stains"]
+        subsets = ["Burrs", "good", "Missing", "Stains", "scratched", "stained", "squeezed", "Broken", "Peel", "missing", 
+                   "Missing1", "Missing2", "Missing3", "Broken1", "Broken2", "Broken3", "Stain1", "Stain2", "Misplace", "Crease", "Hole",
+                   "Scratch", "MissingCenter", "MissingCorner", "MissingEdge", "Mix", "Corrosion", 
+                   "good_1", "good_2", "Missing_1", "Missing_2", "Stains_1", "Stains_2", "Damage_1", "Damage_2", "Pit_1", "Pit_2",
+                   "Rust_1", "Peeled_1", "Peeled_2", "Stains_1", "Stains_2", "Scratch_1", "Scratch_2", "Deformation_2"]
+        
         all_queries = []
         for s in subsets:
             d = os.path.join(args.eval_dir, s)

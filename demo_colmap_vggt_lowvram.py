@@ -665,12 +665,18 @@ def demo_fn(args):
         out_path=out_path,
     )
 
+    torch.cuda.empty_cache()
+
     if args.test_sparse_view:
         tm.mark("before_find_query_poses")
         print(f"TESTING SPARSE VIEW INPUT")
         print(f"[OK][{now}] Preparing query images from {args.eval_dir}")
 
-        subsets = ["Burrs", "good", "Missing", "Stains", "scratched", "stained", "squeezed"]
+        subsets = ["Burrs", "good", "Missing", "Stains", "scratched", "stained", "squeezed", "Broken", "Peel", "missing", 
+                   "Missing1", "Missing2", "Missing3", "Broken1", "Broken2", "Broken3", "Stain1", "Stain2", "Misplace", "Crease", "Hole",
+                   "Scratch", "MissingCenter", "MissingCorner", "MissingEdge", "Mix", "Corrosion", 
+                   "good_1", "good_2", "Missing_1", "Missing_2", "Stains_1", "Stains_2", "Damage_1", "Damage_2", "Pit_1", "Pit_2",
+                   "Rust_1", "Peeled_1", "Peeled_2", "Stains_1", "Stains_2", "Scratch_1", "Scratch_2", "Deformation_2"]
         wanted = {s.lower(): s for s in subsets}
 
         existing_dirs = {

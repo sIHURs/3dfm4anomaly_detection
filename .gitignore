@@ -181,3 +181,4 @@ wandb/**
 core
 tmp
 tmp_fucked
+debug
