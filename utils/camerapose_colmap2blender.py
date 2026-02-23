@@ -14,6 +14,12 @@ def make_c2w_from_colmap(R_wc: np.ndarray, t_wc: np.ndarray) -> np.ndarray:
     T[:3, 3] = (-R_wc.T @ t_wc.reshape(3, 1)).ravel()
     return T
 
+def make_c2w_from_c2w(R_c2w: np.ndarray, t_c2w: np.ndarray) -> np.ndarray:
+    """Assemble cam->world 4x4 from (R_c2w, t_c2w)."""
+    T = np.eye(4, dtype=float)
+    T[:3, :3] = R_c2w
+    T[:3, 3] = t_c2w.reshape(3)
+    return T
 
 def opencv_to_opengl(T_c2w: np.ndarray) -> np.ndarray:
     """OpenCV camera coords -> common NeRF/Blender OpenGL-like convention."""
