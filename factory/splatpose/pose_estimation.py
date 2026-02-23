@@ -36,7 +36,7 @@ def main_pose_estimation(cur_class,
                          retrieval="loftr"):
     
     result_dir = result_dir
-    output_dir = os.path.join(model_dir_location, "output")
+    output_dir = os.path.join(model_dir_location, "output_msk_vanilla")
     model_dir = output_dir if os.path.isdir(output_dir) else model_dir_location
     data_dir = "MAD-Sim/" if data_dir is None else data_dir
     trainset = DefectDataset(data_dir, cur_class, "train", True, True, gt_file=json_name)
@@ -174,7 +174,7 @@ def main_pose_estimation(cur_class,
         optimizer = torch.optim.Adam(cam_transf.parameters(), lr=0.001, betas=(0.9, 0.999))
 
         # todo: tmp hard coded
-        resolution = (800, 800)
+        resolution = (1291, 721)
         # new version requires pil image input
         img = set_entry[0]
         # print("[DEBUG] gt_image:", img, img.shape)
@@ -260,8 +260,8 @@ def main_pose_estimation(cur_class,
 
             # if abs(loss-loss_o) < 3e-6:
             #             #print('Break!!!')
-            #             #print('Step: ', k)
-            #             #print('Loss: ',loss)
+            #             print('Step: ', k)
+            #             print('Loss: ',loss)
             #             break
                     
 

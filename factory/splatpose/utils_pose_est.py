@@ -641,8 +641,12 @@ class DefectDataset(Dataset):
         with open(os.path.join(root, gt_file), "r") as f:
             self.camera_transforms = json.load(f)
 
-        self.camera_angleX = self.camera_transforms["camera_angle_x"] if set == "train" else None
-        self.camera_angleY = self.camera_transforms["camera_angle_y"] if set == "train" else None
+        if set == "train":
+            self.camera_angleX = self.camera_transforms.get("camera_angle_x", None)
+            self.camera_angleY = self.camera_transforms.get("camera_angle_y", self.camera_angleX)
+        else:
+            self.camera_angleX = None
+            self.camera_angleY = None
 
         aug_transform_path = os.path.join(dataset_dir, class_name, "augmented_transforms.json")
         if os.path.isfile(aug_transform_path):

@@ -1,5 +1,6 @@
 {
     "resolution": 1,
-    "cap_max": 800000,
-    "init_type": "sfm"
+    "cap_max": 150000,
+    "init_type": "sfm",
+    "white_background": true
 }

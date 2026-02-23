@@ -55,7 +55,7 @@ class Config:
     # Path to the Mip-NeRF 360 dataset
     data_dir: str = "data/360_v2/garden"
     # Downsample factor for the dataset
-    data_factor: int = 4
+    data_factor: int = 1
     # Directory to save results
     result_dir: str = "results/garden"
     # Every N images there is a test image
@@ -116,7 +116,7 @@ class Config:
 
     # Strategy for GS densification
     strategy: Union[DefaultStrategy, MCMCStrategy] = field(
-        default_factory=DefaultStrategy
+        default_factory=MCMCStrategy
     )
     # Use packed mode for rasterization, this leads to less memory usage but slightly slower.
     packed: bool = False
@@ -129,7 +129,7 @@ class Config:
 
     # Use random background for training to discourage transparency
     random_bkgd: bool = False
-    white_bkgd: bool = True   # add this
+    white_bkgd: bool = False   # add this
 
     # LR for 3D point positions
     means_lr: float = 1.6e-4
@@ -150,7 +150,7 @@ class Config:
     scale_reg: float = 0.0
 
     # Enable camera optimization.
-    pose_opt: bool = False
+    pose_opt: bool = True
     # Learning rate for camera optimization
     pose_opt_lr: float = 1e-5
     # Regularization for camera optimization as weight decay

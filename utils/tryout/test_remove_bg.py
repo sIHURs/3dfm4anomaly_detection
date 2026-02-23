@@ -156,9 +156,9 @@ if __name__ == "__main__":
     )
 
 '''
-python remove_white_bg.py \
-  --input_dir scripts/demo_PIAD_Sim_vggt_3dgs/motor/images_bg \
-  --output_dir scripts/demo_PIAD_Sim_vggt_3dgs/motor/images \
+python utils/tryout/test_remove_bg.py \
+  --input_dir scripts/experiment_RAD_nonmask_vggt/3dgs_model/bowl_upright/images \
+  --output_dir scripts/experiment_RAD_nonmask_vggt/3dgs_model/bowl_upright/images_trans \
   --dist_thresh 22 \
   --white_thresh 245 \
   --open_ksize 3 \
