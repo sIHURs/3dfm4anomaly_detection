@@ -60,6 +60,7 @@ def build_transforms_pinhole(
     first_cam = list(cameras.values())[0]
     fx0, fy0, cx0, cy0 = unpack_intrinsics(first_cam)
     angle_x = 2.0 * math.atan(first_cam.width / (2.0 * fx0))
+    angle_y = 2.0 * math.atan(first_cam.height / (2.0 * fy0))
 
     # Sort frames
     img_items = list(images.items())
@@ -95,7 +96,7 @@ def build_transforms_pinhole(
             }
         )
 
-    return {"camera_angle_x": float(angle_x), "frames": frames}
+    return {"camera_angle_x": float(angle_x), "camera_angle_y": float(angle_y), "frames": frames}
 
 
 def write_failed_transforms(out_path: str, reason: str, extra: dict | None = None):
@@ -140,7 +141,7 @@ def process_one_scene(scene_dir: str, ext: str, image_base_dir: str | None, sort
     expects sparse/0 inside scene_dir
     writes transforms.json into scene_dir/transforms.json
     """
-    out_path = os.path.join(scene_dir, "transforms.json")
+    out_path = os.path.join(scene_dir, "transforms_anomaly_free_poses.json")
     sparse_dir = os.path.join(scene_dir, "sparse")
     recons = list_recon_subdirs(sparse_dir)
 

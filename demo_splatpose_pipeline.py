@@ -55,6 +55,7 @@ pre_parser.add_argument("--model_path_splatpose", type=str, help="path of 3dgs o
 pre_parser.add_argument("--pcd_name", type=str, help="name of the processed 3dgs poind cloud", default="point_cloud.ply")
 pre_parser.add_argument("--json_name", type=str, help="name of the camera pose json file", default="transforms.json")
 pre_parser.add_argument("--retrieval_model", type=str, help="model for init c2w", default="loftr")
+pre_parser.add_argument("--gs_dir", type=str, help="3dgs output dir", default="output")
 pre_parser.add_argument("--query_json_path", type=str, help="path of the query camera pose json file", default="query_json_path.json")
 pre_parser.add_argument("--query_conf_map_path", type=str, help="path of the query images conf map", default="query_json_path.json")
 
@@ -163,7 +164,7 @@ if DEBUG_CONF_FEATURE:
 
     depth_conf_norm = (depth_conf - min_v) / (max_v - min_v + 1e-8)
 
-    print("[DEBUG] depth_conf_query_images.shape: ", depth_conf_query_images.shape)
+    # print("[DEBUG] depth_conf_query_images.shape: ", depth_conf_query_images.shape)
 
 test_images, reference_images, all_labels, gt_masks, times, total_times, filenames = main_pose_estimation(cur_class=args.classname,
                                                                                     result_dir=result_dir,
@@ -176,7 +177,8 @@ test_images, reference_images, all_labels, gt_masks, times, total_times, filenam
                                                                                     query_json_path=args.query_json_path,
                                                                                     loftr_batch=args.loftr_batch,
                                                                                     loftr_resolution=args.loftr_resolution,
-                                                                                    retrieval=args.retrieval_model)
+                                                                                    retrieval=args.retrieval_model,
+                                                                                    gs_dir=args.gs_dir)
 
 
 ## DEBUG ############################
@@ -403,21 +405,21 @@ if not DEBUG_CONF_FEATURE:
         # todo: use batch, not just single images at once
         for i in range(len(test_images)):
             ref=tf_img(reference_images[i]).unsqueeze(0).cuda()
-            print("[DEBUG] ref shape:", ref.shape)
+            # print("[DEBUG] ref shape:", ref.shape)
             rgb=tf_img(test_images[i]).unsqueeze(0).cuda()
-            print("[DEBUG] rgb shape:", rgb.shape)
+            # print("[DEBUG] rgb shape:", rgb.shape)
             fileId = filenames[i]
             # todo: torch.cat([ref, rgb], dim=0) then send into model, inference only once
             ref_feature=model(ref)
-            print("[DEBUG] ref_feature shape:", len(ref_feature), ref_feature[0].shape)
+            # print("[DEBUG] ref_feature shape:", len(ref_feature), ref_feature[0].shape)
             rgb_feature=model(rgb)
-            print("[DEBUG] rgb_feature shape:", len(rgb_feature), rgb_feature[0].shape)
+            # print("[DEBUG] rgb_feature shape:", len(rgb_feature), rgb_feature[0].shape)
             score = criterion(ref, rgb).sum(1, keepdim=True)
             for i in range(len(ref_feature)):
                 
                 s_act = ref_feature[i]
                 mse_loss = criterion(s_act, rgb_feature[i]).sum(1, keepdim=True)
-                print("[DEBUG] mse_loss.shape:", mse_loss.shape)
+                # print("[DEBUG] mse_loss.shape:", mse_loss.shape)
                 score += torch.nn.functional.interpolate(mse_loss, size=score.shape[-2:], mode='bilinear', align_corners=False)
 
             score = score.squeeze(1).cpu().numpy()

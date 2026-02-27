@@ -11,6 +11,17 @@ output_dir = "/home/wangyifa/tmp/Depth-Anything-3/demo/01Gorilla_da_a6000/output
 os.makedirs(output_dir, exist_ok=True)
 export_format = "colmap"
 
+# kwargs = {
+#   "colmap": {
+#     "image_paths": image_paths,
+#     "conf_thresh_percentile": 40.0,
+#     "process_res_method": "upper_bound_resize",
+#     "num_points": 200_000,
+#     "point_select": "topk",
+#     "seed": 0,
+#   }
+# }
+
 prediction = model.inference(
     images,
     extrinsics=None,
