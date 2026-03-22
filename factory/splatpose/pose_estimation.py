@@ -183,7 +183,7 @@ def main_pose_estimation(cur_class,
         optimizer = torch.optim.Adam(cam_transf.parameters(), lr=0.001, betas=(0.9, 0.999))
 
         # todo: tmp hard coded
-        resolution = (1291, 721)
+        resolution =  (1291, 721)#(1291, 721)
         # new version requires pil image input
         img = set_entry[0]
         # print("[DEBUG] gt_image:", img, img.shape)
@@ -229,7 +229,7 @@ def main_pose_estimation(cur_class,
             for param_group in optimizer.param_groups:
                 param_group['lr'] = new_lrate
 
-            if iters == k - 1:
+            if iters == k - 1: #or abs(loss-loss_o) < 3e-6
                 if verbose:
                     
                     cur_save = os.path.join(save_to, filename.split(".")[0])
@@ -268,12 +268,11 @@ def main_pose_estimation(cur_class,
                 reference_images.append(rendering.cpu().detach())
 
             # if abs(loss-loss_o) < 3e-6:
-            #             #print('Break!!!')
-            #             print('Step: ', k)
-            #             print('Loss: ',loss)
-            #             break
-                    
-
+            #     #print('Break!!!')
+            #     print('Step: ', k)
+            #     print('Loss: ',loss)
+            #     break
+                       
             # loss_o = loss.clone()
 
         pose_end.record()
