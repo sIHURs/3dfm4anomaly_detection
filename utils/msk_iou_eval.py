@@ -37,6 +37,40 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
+CLASS_NAME_MAP = {
+    "bowl_upright": "bowl",
+    "cup1_upright": "cup1",
+    "cup2_upright": "cup2",
+    "spoon_upright": "spoon",
+    "cup2_upright2": "cup3",
+    "cup2_upright3": "cup4",
+}
+
+
+def display_class_name(cls: str) -> str:
+    return CLASS_NAME_MAP.get(cls, cls)
+
+
+def smart_iou_ylim(data: list[list[float]], min_floor: float = 0.0) -> tuple[float, float]:
+    """
+    Auto-adjust y-axis for IoU boxplots.
+    If values are mostly high, zoom into the upper range for better readability.
+    """
+    vals = [x for arr in data for x in arr if arr]
+    if not vals:
+        return (0.0, 1.02)
+
+    arr = np.asarray(vals, dtype=np.float64)
+    vmin = float(arr.min())
+    q1 = float(np.percentile(arr, 25))
+
+    # If most IoUs are high, zoom in to show differences better
+    if q1 >= 0.85:
+        lower = max(min_floor, math.floor((vmin - 0.03) * 20) / 20.0)
+        lower = max(0.65, lower)
+        return (lower, 1.01)
+
+    return (0.0, 1.02)
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -391,18 +425,58 @@ def save_boxplot_per_class(
     if not valid_items:
         return
 
-    labels = [k for k, _ in valid_items]
+    labels_raw = [k for k, _ in valid_items]
+    labels = [display_class_name(k) for k in labels_raw]
     data = [v for _, v in valid_items]
 
-    fig_w = max(8, 0.45 * len(labels) + 4)
-    fig, ax = plt.subplots(figsize=(fig_w, 6))
-    ax.boxplot(data, tick_labels=labels, showfliers=True)
-    ax.set_ylabel("IoU")
-    ax.set_title("Per-class IoU boxplot")
-    ax.set_ylim(0.0, 1.02)
-    plt.xticks(rotation=45, ha="right")
-    fig.tight_layout()
+    fig_w = max(10, 0.55 * len(labels) + 4)
+    fig, ax = plt.subplots(figsize=(fig_w, 6.2))
 
+    bp = ax.boxplot(
+        data,
+        tick_labels=labels,
+        patch_artist=True,
+        showfliers=True,
+        showmeans=True,
+        meanline=False,
+        widths=0.5,
+        boxprops=dict(facecolor="#DCEAF7", edgecolor="#4C78A8", linewidth=1.2),
+        whiskerprops=dict(color="#4C78A8", linewidth=1.1),
+        capprops=dict(color="#4C78A8", linewidth=1.1),
+        medianprops=dict(color="#E67E22", linewidth=1.6),
+        meanprops=dict(
+            marker="D",
+            markerfacecolor="#1F4E79",
+            markeredgecolor="white",
+            markeredgewidth=0.8,
+            markersize=4.8,
+        ),
+        flierprops=dict(
+            marker="o",
+            markerfacecolor="none",
+            markeredgecolor="black",
+            markeredgewidth=0.8,
+            markersize=6.0,
+            alpha=0.85,
+            linestyle="none",
+        ),
+    )
+
+    ymin, ymax = smart_iou_ylim(data)
+    ax.set_ylim(ymin, ymax)
+    ax.set_ylabel("IoU", fontsize=12)
+    ax.set_title("Per-class IoU Distribution", fontsize=15, pad=10)
+
+    ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.35)
+    ax.set_axisbelow(True)
+
+    plt.xticks(rotation=42, ha="right", fontsize=10)
+    ax.tick_params(axis="y", labelsize=10)
+
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+
+    fig.tight_layout()
     ensure_parent(out_path)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -412,13 +486,50 @@ def save_single_class_boxplot(cls: str, ious: list[float], out_path: Path, dpi: 
     if not ious:
         return
 
-    fig, ax = plt.subplots(figsize=(4.5, 6))
-    ax.boxplot([ious], tick_labels=[cls], showfliers=True)
-    ax.set_ylabel("IoU")
-    ax.set_title(f"IoU boxplot: {cls}")
-    ax.set_ylim(0.0, 1.02)
-    fig.tight_layout()
+    cls_disp = display_class_name(cls)
 
+    fig, ax = plt.subplots(figsize=(4.8, 6.0))
+    bp = ax.boxplot(
+        [ious],
+        tick_labels=[cls_disp],
+        patch_artist=True,
+        showfliers=True,
+        showmeans=True,
+        widths=0.45,
+        boxprops=dict(facecolor="#DCEAF7", edgecolor="#4C78A8", linewidth=1.2),
+        whiskerprops=dict(color="#4C78A8", linewidth=1.1),
+        capprops=dict(color="#4C78A8", linewidth=1.1),
+        medianprops=dict(color="#E67E22", linewidth=1.6),
+        meanprops=dict(
+            marker="D",
+            markerfacecolor="#1F4E79",
+            markeredgecolor="white",
+            markeredgewidth=0.8,
+            markersize=5.0,
+        ),
+        flierprops=dict(
+            marker="o",
+            markerfacecolor="none",
+            markeredgecolor="black",
+            markeredgewidth=0.8,
+            markersize=6.0,
+            alpha=0.85,
+            linestyle="none",
+        ),
+    )
+
+    ymin, ymax = smart_iou_ylim([ious])
+    ax.set_ylim(ymin, ymax)
+    ax.set_ylabel("IoU", fontsize=12)
+    ax.set_title(f"IoU Distribution: {cls_disp}", fontsize=14, pad=10)
+
+    ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.35)
+    ax.set_axisbelow(True)
+
+    for spine in ["top", "right"]:
+        ax.spines[spine].set_visible(False)
+
+    fig.tight_layout()
     ensure_parent(out_path)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -660,11 +771,45 @@ def main():
         )
 
         if all_ious:
-            fig, ax = plt.subplots(figsize=(4.5, 6))
-            ax.boxplot([all_ious], tick_labels=["all"], showfliers=True)
-            ax.set_ylabel("IoU")
-            ax.set_title("Global IoU boxplot")
-            ax.set_ylim(0.0, 1.02)
+            fig, ax = plt.subplots(figsize=(4.8, 6.0))
+            ax.boxplot(
+                [all_ious],
+                tick_labels=["all"],
+                patch_artist=True,
+                showfliers=True,
+                showmeans=True,
+                widths=0.45,
+                boxprops=dict(facecolor="#DCEAF7", edgecolor="#4C78A8", linewidth=1.2),
+                whiskerprops=dict(color="#4C78A8", linewidth=1.1),
+                capprops=dict(color="#4C78A8", linewidth=1.1),
+                medianprops=dict(color="#E67E22", linewidth=1.6),
+                meanprops=dict(
+                    marker="D",
+                    markerfacecolor="#1F4E79",
+                    markeredgecolor="white",
+                    markeredgewidth=0.8,
+                    markersize=5.0,
+                ),
+                flierprops=dict(
+                    marker="o",
+                    markerfacecolor="none",
+                    markeredgecolor="black",
+                    markeredgewidth=0.8,
+                    markersize=6.0,
+                    alpha=0.85,
+                    linestyle="none",
+                ),
+            )
+            ymin, ymax = smart_iou_ylim([all_ious])
+            ax.set_ylim(ymin, ymax)
+            ax.set_ylabel("IoU", fontsize=12)
+            ax.set_title("Global IoU Distribution", fontsize=14, pad=10)
+            ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.35)
+            ax.set_axisbelow(True)
+
+            for spine in ["top", "right"]:
+                ax.spines[spine].set_visible(False)
+
             fig.tight_layout()
             fig.savefig(analysis_root / "boxplot_global.png", dpi=args.dpi, bbox_inches="tight")
             plt.close(fig)

@@ -2,23 +2,23 @@
 classes=(
     "rubberduck"
     "binderclip2"
-    "bowl_upright"
+    "bowl_upright"  #-> bowl
     "box"
     "can"
     "charger"
-    "cup1_upright"
-    "cup2_upright"
+    "cup1_upright"  #-> cup1
+    "cup2_upright"  #-> cup2
     "gluebottle"
-    "spoon_upright"
+    "spoon_upright" #-> spoon
     "tennisball"
     "phonecase2"
 
-    "binderclip"  # 3dgs mcmc traninig is wrong
-    "cup2_upright2"
-    "cup2_upright3"
+    "binderclip"
+    "cup2_upright2" #-> cup3
+    "cup2_upright3" #-> cup4
     "phonecase"
     "gluebottle2"
-    "spraybottle2" # also
+    "spraybottle2" 
 )
 
 # python utils/msk_iou_eval.py \
