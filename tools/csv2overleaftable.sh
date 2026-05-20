@@ -1,5 +1,5 @@
 python tools/csv2overleaftable.py \
-  --csv output/RAD_ad_eval_seed0/results_image_ROCAUC.csv \
-  --cols ad_eval_vanilla,ad_eval_cd,ad_eval_mcmc_manel_k150 \
-  --header-names vanilla_3dgs,cdgs,3dgsmcmc  \
-  --output overleaf/rad_result_3dgs_ablation.tex
+  --csv output/MAD_Sim_eval_paper/results_aupro.csv \
+  --cols vggt_3dgs_opt,vggt_cdgs,vggt_mcmc \
+  --header-names vggt_3dgs_opt,vggt_cdgs,vggt_mcmc  \
+  --output overleaf_asset/mad_sim_3dgs_ablation_pxl_aupro.tex
